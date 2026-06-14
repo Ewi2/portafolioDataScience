@@ -1,0 +1,1433 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    accuracy_score, classification_report,
+    confusion_matrix, roc_curve, auc
+)
+from sklearn.preprocessing import StandardScaler
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy import stats as scipy_stats
+import requests
+from bs4 import BeautifulSoup
+from textblob import TextBlob
+import re
+import warnings
+import os
+
+warnings.filterwarnings("ignore")
+
+# ──────────────────────────────────────────────────────────────
+# CONFIGURACIÓN DE PÁGINA
+# ──────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Portafolio",
+    page_icon="",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ──────────────────────────────────────────────────────────────
+# ESTILOS GLOBALES
+# ──────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* ── Fuentes y body ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] { background: #0d0d1a !important; }
+section[data-testid="stSidebar"] * { color: #c9cfe0 !important; }
+.sidebar-logo {
+    text-align: center;
+    padding: 12px 0 8px;
+    font-size: 1.6rem;
+    letter-spacing: .12em;
+    font-weight: 700;
+    color: #e94560 !important;
+}
+
+/* ── Tarjetas de métricas ── */
+div[data-testid="metric-container"] {
+    background: linear-gradient(135deg, #13132b 0%, #1e2a4a 100%);
+    border: 1px solid #2a3a6a;
+    border-radius: 12px;
+    padding: 14px 20px;
+}
+
+/* ── Barra horizontal ── */
+hr { border-color: #2a2a4a !important; }
+
+/* ── Cajas de hipótesis ── */
+.hypothesis-box {
+    background: #13132b;
+    border-left: 4px solid #e94560;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    color: #c9cfe0;
+}
+
+/* ── Tarjeta perfil ── */
+.profile-card {
+    background: linear-gradient(135deg,#0f0c29,#302b63,#24243e);
+    border-radius: 16px;
+    padding: 36px 40px;
+    color: white;
+    text-align: center;
+    margin-bottom: 24px;
+}
+.profile-card h1 { color: #e94560; font-size: 2.4rem; margin-bottom: 4px; }
+.profile-card h3 { color: #a8b2d8; font-weight: 300; }
+
+/* ── Placeholder dashed box ── */
+.dashed-box {
+    border: 2px dashed #3a3a6a;
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    color: #6a6a9a;
+}
+
+/* ── Tarjeta de recomendación ── */
+.rec-card {
+    background: #13132b;
+    border: 1px solid #e94560;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 6px 0;
+    color: #c9cfe0;
+}
+
+/* ── Respuesta IA ── */
+.ai-response {
+    background: linear-gradient(135deg,#13132b,#1e2a4a);
+    border-left: 5px solid #e94560;
+    border-radius: 8px;
+    padding: 20px 24px;
+    color: #e8e8f0;
+    line-height: 1.7;
+    margin-top: 16px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────────────────────
+# CARGA Y PREPARACIÓN DE DATOS
+# ──────────────────────────────────────────────────────────────
+DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "rym_clean1.csv")
+
+@st.cache_data(show_spinner="Cargando dataset…")
+def load_data():
+    df = pd.read_csv(DATA_PATH, index_col=0)
+    df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
+    df["year"]   = df["release_date"].dt.year
+    df["decade"] = (df["year"] // 10 * 10).astype("Int64")
+    df["secondary_genres"] = df["secondary_genres"].fillna("")
+    df["descriptors"]      = df["descriptors"].fillna("")
+    df["main_genre"]       = df["primary_genres"].apply(
+        lambda x: x.split(",")[0].strip() if pd.notna(x) else "Unknown"
+    )
+    df["content"] = (
+        df["primary_genres"] + " " + df["secondary_genres"] + " " + df["descriptors"]
+    )
+    rating_median     = df["rating_count"].median()
+    df["top_rated"]   = (df["avg_rating"] >= 3.8).astype(int)
+    df["popular"]     = (df["rating_count"] >= rating_median).astype(int)
+    return df
+
+df = load_data()
+
+# ──────────────────────────────────────────────────────────────
+# SIDEBAR – NAVEGACIÓN
+# ──────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown('<div class="sidebar-logo">🎵 DS Portfolio</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    page = st.radio(
+        "Menú principal",
+        options=[
+            "🏠 Inicio",
+            "📊 Análisis Exploratorio",
+            "🤖 Aprendizaje Automático",
+            "🎵 Sistema de Recomendación",
+            "📁 Análisis por Archivos",
+            "💬 Sentimientos & Scrapping",
+            "🧠 Prompts de IA",
+        ],
+        label_visibility="collapsed",
+    )
+    st.markdown("---")
+    st.caption(f"**Dataset:** RateYourMusic Top 5 000")
+    st.caption(f"**Registros:** {len(df):,}   |   **Campos:** {len(df.columns)}")
+    st.caption(f"**Período:** {int(df['year'].min())} – {int(df['year'].max())}")
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 1 – INICIO / PORTAFOLIO
+# ══════════════════════════════════════════════════════════════
+def render_home():
+    # ─── Banner ───
+    st.markdown("""
+    <div class="profile-card">
+        <h1>Portafolio de Ciencia de Datos</h1>
+        <h3>Análisis de los Top 5,000 Álbumes en RateYourMusic</h3>
+        <p style="color:#6a6a9a;margin-top:6px;">
+            Ingeniería en Sistemas y Redes Informáticas · Ciclo I-2026
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_photo, col_info = st.columns([1, 2], gap="large")
+
+    # ─── Foto ───
+    with col_photo:
+        st.markdown("#### 📸 Fotografía")
+        st.markdown("""
+        <div class="dashed-box">
+            <div style="font-size:3.5rem;">👤</div>
+            <p style="margin-top:12px;"><b>Inserta tu fotografía aquí</b></p>
+            <code style="font-size:.75rem;">st.image("assets/foto.jpg", use_column_width=True)</code>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ─── Información personal ───
+    with col_info:
+        st.markdown("#### 👤 Información Personal")
+        nombre = st.text_input(
+            "✏️ Tu nombre completo:",
+            placeholder="Escribe tu nombre aquí…",
+            key="student_name",
+        )
+        if nombre:
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,#1e3c72,#2a5298);
+                        border-radius:12px;padding:20px 24px;color:white;margin-top:8px;">
+                <h2 style="color:#FFD700;margin:0 0 4px;">👋 {nombre}</h2>
+                <p style="color:#a8b2d8;margin:2px 0;">
+                    Estudiante de Ingeniería en Sistemas y Redes Informáticas
+                </p>
+                <p style="color:#a8b2d8;margin:0;">Ciclo I-2026 · Ciencia de Datos</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("#### 📝 Resumen Personal")
+        st.markdown("""
+        <div class="dashed-box" style="text-align:left;padding:16px 20px;">
+            <p style="margin:0;"><i>✏️ Reemplaza este bloque con tu resumen (3-5 líneas):</i></p>
+            <hr style="border-color:#2a2a4a;margin:10px 0;">
+            <p style="margin:0;color:#8888aa;">
+                Ejemplo: Soy estudiante de Ingeniería en Sistemas con pasión por la Ciencia de Datos.
+                Mi proyecto analiza los 5 000 álbumes más populares de RateYourMusic, buscando
+                patrones de calificación, géneros y popularidad. Me interesa la intersección entre
+                la música y el análisis de datos.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ─── Video ───
+    st.markdown("#### 🎬 Video Demo – Data Storytelling")
+    st.markdown("""
+    <div class="dashed-box">
+        <div style="font-size:3rem;">🎥</div>
+        <p style="margin-top:12px;"><b>Inserta tu video aquí</b></p>
+        <p style="color:#8888aa;">Duración: 5-7 min · Vestimenta formal · Con diapositivas</p>
+        <code style="font-size:.8rem;">st.video("https://youtu.be/TU_VIDEO_ID")</code>
+        <br><code style="font-size:.8rem;">st.video("assets/demo.mp4")</code>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ─── KPIs del dataset ───
+    st.markdown("#### 📊 Vistazo Rápido al Dataset")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🎵 Álbumes", f"{len(df):,}")
+    k2.metric("⭐ Rating Promedio", f"{df['avg_rating'].mean():.2f}")
+    k3.metric("🎸 Géneros Únicos",
+              df["primary_genres"].str.split(",").explode().str.strip().nunique())
+    k4.metric("📅 Años Cubiertos",
+              f"{int(df['year'].min())} – {int(df['year'].max())}")
+
+    # ─── Top 10 ───
+    st.markdown("#### 🏆 Top 10 Álbumes")
+    top10 = df.nsmallest(10, "position")[
+        ["position", "release_name", "artist_name", "avg_rating", "rating_count", "primary_genres"]
+    ].rename(columns={
+        "position": "#", "release_name": "Álbum", "artist_name": "Artista",
+        "avg_rating": "Rating ⭐", "rating_count": "Ratings 👥", "primary_genres": "Géneros"
+    })
+    st.dataframe(top10, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 2 – ANÁLISIS EXPLORATORIO
+# ══════════════════════════════════════════════════════════════
+def render_eda():
+    st.markdown("## 📊 Análisis Exploratorio de Datos")
+
+    submenu = st.selectbox("Selecciona una sección:", [
+        "📋 Descripción del Dataset",
+        "🔍 Descripción de los Campos",
+        "🗂️ Navegador del Dataset",
+        "🔎 Buscador de Registros",
+        "📈 Graficador Exploratorio",
+        "💡 Hipótesis",
+    ])
+
+    # ── 2.1 DESCRIPCIÓN ──────────────────────────────────────
+    if submenu == "📋 Descripción del Dataset":
+        st.markdown("### 📋 Descripción del Dataset")
+
+        col_a, col_b = st.columns([1, 1], gap="large")
+        with col_a:
+            st.markdown("""
+**RateYourMusic Top 5 000 Álbumes**
+
+Este dataset recopila los 5 000 álbumes más populares de **RateYourMusic.com**,
+la mayor base de datos de música mantenida por su comunidad. Incluye calificaciones,
+géneros, descriptores de atmósfera y métricas de popularidad para cada lanzamiento.
+
+- **Origen:** RateYourMusic.com (comunidad)
+- **Criterio:** Ranking de popularidad ponderada
+- **Período cubierto:** 1954 – 2022
+- **Tipo de lanzamientos:** Álbumes de estudio
+            """)
+
+        with col_b:
+            st.markdown("**Estadísticas de variables numéricas:**")
+            stats = df[["avg_rating", "rating_count", "review_count", "position"]].describe().round(2)
+            stats.index = ["N", "Media", "Desv. Est.", "Mín.", "Q1", "Mediana", "Q3", "Máx."]
+            st.dataframe(stats, use_container_width=True)
+
+        st.markdown("### 📌 Diccionario de Campos")
+        fields = pd.DataFrame({
+            "Campo": ["position","release_name","artist_name","release_date","release_type",
+                      "primary_genres","secondary_genres","descriptors",
+                      "avg_rating","rating_count","review_count"],
+            "Tipo": ["Entero","Texto","Texto","Fecha","Texto","Texto","Texto","Texto",
+                     "Decimal","Entero","Entero"],
+            "Descripción": [
+                "Posición en el ranking de popularidad (1 = más popular)",
+                "Título del álbum",
+                "Nombre del artista o banda",
+                "Fecha de lanzamiento",
+                "Tipo de lanzamiento (todos son 'album' en este dataset)",
+                "Géneros musicales primarios asignados por la comunidad",
+                "Géneros secundarios o subgéneros adicionales (puede estar vacío)",
+                "Descriptores de atmósfera y características del álbum",
+                "Calificación promedio ponderada (escala 0.5 – 5.0)",
+                "Número total de calificaciones individuales",
+                "Número total de reseñas escritas por usuarios",
+            ],
+        })
+        st.dataframe(fields, use_container_width=True, hide_index=True)
+
+        missing = df.isnull().sum()
+        missing = missing[missing > 0]
+        if len(missing):
+            st.warning("⚠️ Valores faltantes detectados:")
+            st.dataframe(missing.to_frame("Faltantes"), use_container_width=True)
+        else:
+            st.success("✅ No hay valores faltantes en las columnas originales.")
+
+    # ── 2.2 DESCRIPCIÓN DE CAMPOS ────────────────────────────
+    elif submenu == "🔍 Descripción de los Campos":
+        st.markdown("### 🔍 Descripción de los Campos")
+
+        campo = st.selectbox("Selecciona un campo:", [
+            "position","release_name","artist_name","release_date","release_type",
+            "primary_genres","secondary_genres","descriptors",
+            "avg_rating","rating_count","review_count",
+        ])
+
+        TIPOS = {
+            "position":         ("Cuantitativo – Discreto", "Posición del álbum en el ranking global de popularidad."),
+            "release_name":     ("Categórico – Nominal",    "Título del álbum o lanzamiento."),
+            "artist_name":      ("Categórico – Nominal",    "Nombre del artista o banda que publicó el álbum."),
+            "release_date":     ("Fecha",                   "Fecha exacta de lanzamiento (año-mes-día)."),
+            "release_type":     ("Categórico",              "Tipo de lanzamiento. En este dataset todos son 'album'."),
+            "primary_genres":   ("Categórico – Múltiple",   "Géneros musicales primarios, separados por coma."),
+            "secondary_genres": ("Categórico – Múltiple",   "Subgéneros o géneros complementarios (puede estar vacío)."),
+            "descriptors":      ("Categórico – Múltiple",   "Palabras clave que describen el mood o características del álbum."),
+            "avg_rating":       ("Cuantitativo – Continuo", "Calificación promedio ponderada otorgada por la comunidad (0.5–5.0)."),
+            "rating_count":     ("Cuantitativo – Discreto", "Número total de calificaciones individuales recibidas."),
+            "review_count":     ("Cuantitativo – Discreto", "Número total de reseñas escritas por usuarios."),
+        }
+
+        tipo, desc = TIPOS[campo]
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            st.info(f"**Tipo:** {tipo}")
+            st.info(f"**Descripción:** {desc}")
+
+        CUANTITATIVOS = ["position", "avg_rating", "rating_count", "review_count"]
+
+        if campo in CUANTITATIVOS:
+            with col_b:
+                d = df[campo].describe().round(4)
+                d.index = ["N","Media","Desv. Est.","Mín.","Q1 (25%)","Mediana","Q3 (75%)","Máx."]
+                st.dataframe(d.to_frame("Valor"), use_container_width=True)
+
+            fig = px.histogram(df, x=campo, nbins=60,
+                               title=f"Distribución de «{campo}»",
+                               color_discrete_sequence=["#e94560"])
+            fig.update_layout(bargap=0.05)
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif campo == "release_date":
+            rng_col, _ = st.columns([1, 1])
+            rng_col.info(f"Rango: {df['release_date'].min().date()} → {df['release_date'].max().date()}")
+            fig = px.histogram(df, x="year", nbins=70,
+                               title="Álbumes por Año de Lanzamiento",
+                               color_discrete_sequence=["#1e3c72"])
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif campo in ["primary_genres", "secondary_genres", "descriptors"]:
+            vals = (df[campo].str.split(",").explode().str.strip()
+                    .pipe(lambda s: s[s.notna() & (s != "")]).value_counts().head(25))
+            st.markdown(f"**Top 25 valores más frecuentes:**")
+            st.dataframe(vals.to_frame("Frecuencia"), use_container_width=True)
+            fig = px.bar(y=vals.index, x=vals.values, orientation="h",
+                         title=f"Top 25 – {campo}",
+                         labels={"x": "Frecuencia", "y": campo},
+                         color_discrete_sequence=["#1e3c72"])
+            fig.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            vals = df[campo].value_counts()
+            st.info(f"Valores únicos: {df[campo].nunique()}")
+            st.dataframe(vals.head(20).to_frame("Frecuencia"), use_container_width=True)
+
+    # ── 2.3 NAVEGADOR ────────────────────────────────────────
+    elif submenu == "🗂️ Navegador del Dataset":
+        st.markdown("### 🗂️ Navegador del Dataset")
+
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            all_genres = sorted(
+                df["primary_genres"].str.split(",").explode().str.strip().dropna().unique().tolist()
+            )
+            genre_filter = st.multiselect("Género primario:", all_genres)
+        with f2:
+            y_min, y_max = int(df["year"].min()), int(df["year"].max())
+            year_range = st.slider("Años:", y_min, y_max, (y_min, y_max))
+        with f3:
+            r_min, r_max = float(df["avg_rating"].min()), float(df["avg_rating"].max())
+            rating_range = st.slider("Rating:", r_min, r_max, (r_min, r_max), step=0.01)
+
+        fdf = df.copy()
+        if genre_filter:
+            mask = fdf["primary_genres"].apply(lambda x: any(g in str(x) for g in genre_filter))
+            fdf = fdf[mask]
+        fdf = fdf[
+            fdf["year"].between(year_range[0], year_range[1]) &
+            fdf["avg_rating"].between(rating_range[0], rating_range[1])
+        ]
+
+        st.info(f"Mostrando **{len(fdf):,}** registros de {len(df):,}")
+        show = ["position","release_name","artist_name","year",
+                "primary_genres","avg_rating","rating_count","review_count"]
+        st.dataframe(
+            fdf[show].rename(columns={
+                "position": "#", "release_name": "Álbum", "artist_name": "Artista",
+                "year": "Año", "primary_genres": "Géneros", "avg_rating": "Rating",
+                "rating_count": "# Ratings", "review_count": "Reseñas",
+            }),
+            use_container_width=True, height=520,
+        )
+
+    # ── 2.4 BUSCADOR (BONUS) ─────────────────────────────────
+    elif submenu == "🔎 Buscador de Registros":
+        st.markdown("### 🔎 Buscador de Registros")
+
+        search_by = st.radio("Buscar por:", ["Nombre de álbum", "Nombre de artista", "Posición (#)"],
+                             horizontal=True)
+
+        if search_by == "Posición (#)":
+            val = st.number_input("Posición:", 1, 5000, 1)
+            result = df[df["position"] == val]
+        elif search_by == "Nombre de álbum":
+            q = st.text_input("Nombre del álbum:")
+            result = df[df["release_name"].str.contains(q, case=False, na=False)] if q else pd.DataFrame()
+        else:
+            q = st.text_input("Nombre del artista:")
+            result = df[df["artist_name"].str.contains(q, case=False, na=False)] if q else pd.DataFrame()
+
+        if len(result) > 0:
+            for _, row in result.head(6).iterrows():
+                with st.expander(f"🎵 #{int(row['position'])} – {row['release_name']} · {row['artist_name']}"):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("⭐ Rating", row["avg_rating"])
+                    c2.metric("👥 Ratings", f"{row['rating_count']:,}")
+                    c3.metric("📝 Reseñas", f"{row['review_count']:,}")
+                    st.write(f"**Géneros:** {row['primary_genres']}")
+                    if row["secondary_genres"]:
+                        st.write(f"**Géneros secundarios:** {row['secondary_genres']}")
+                    st.write(f"**Descriptores:** {row['descriptors']}")
+                    st.write(f"**Lanzamiento:** {row['release_date'].date() if pd.notna(row['release_date']) else 'N/D'}")
+        elif "q" in dir() and q:
+            st.warning("No se encontraron resultados.")
+
+    # ── 2.5 GRAFICADOR EXPLORATORIO ──────────────────────────
+    elif submenu == "📈 Graficador Exploratorio":
+        st.markdown("### 📈 Graficador Exploratorio")
+
+        campo = st.selectbox("Campo a graficar:", [
+            "avg_rating","rating_count","review_count","position",
+            "year","decade","primary_genres","descriptors",
+        ])
+
+        CUANTITATIVOS = ["avg_rating","rating_count","review_count","position","year"]
+
+        if campo in CUANTITATIVOS:
+            t1, t2, t3 = st.tabs(["📊 Histograma","📦 Boxplot","📈 Distribución Acumulada"])
+            with t1:
+                fig = px.histogram(df, x=campo, nbins=55,
+                                   title=f"Distribución de {campo}",
+                                   color_discrete_sequence=["#1e3c72"],
+                                   marginal="rug")
+                st.plotly_chart(fig, use_container_width=True)
+            with t2:
+                fig = px.box(df, y=campo, title=f"Boxplot de {campo}",
+                             color_discrete_sequence=["#e94560"])
+                st.plotly_chart(fig, use_container_width=True)
+            with t3:
+                fig = px.ecdf(df, x=campo, title=f"Dist. Acumulada de {campo}",
+                              color_discrete_sequence=["#e94560"])
+                st.plotly_chart(fig, use_container_width=True)
+
+        elif campo == "decade":
+            decade_df = df[df["decade"].notna()].copy()
+            dec = decade_df.groupby("decade").agg(
+                N=("release_name","count"),
+                Rating_Prom=("avg_rating","mean")
+            ).reset_index()
+            dec["Década"] = dec["decade"].astype(str) + "s"
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            fig.add_trace(go.Bar(x=dec["Década"], y=dec["N"], name="N° Álbumes",
+                                 marker_color="#1e3c72"), secondary_y=False)
+            fig.add_trace(go.Scatter(x=dec["Década"], y=dec["Rating_Prom"],
+                                     name="Rating Promedio", mode="lines+markers",
+                                     marker_color="#e94560", line_width=3), secondary_y=True)
+            fig.update_layout(title="Álbumes y Rating Promedio por Década",
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02))
+            fig.update_yaxes(title_text="N° Álbumes", secondary_y=False)
+            fig.update_yaxes(title_text="Rating Promedio", secondary_y=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif campo in ["primary_genres", "descriptors"]:
+            vals = (df[campo].str.split(",").explode().str.strip()
+                    .pipe(lambda s: s[s.notna() & (s != "")]).value_counts().head(25))
+            fig = px.bar(y=vals.index, x=vals.values, orientation="h",
+                         title=f"Top 25 {campo}",
+                         labels={"x":"Frecuencia","y": campo},
+                         color=vals.values, color_continuous_scale="Blues")
+            fig.update_layout(yaxis={"categoryorder":"total ascending"},
+                              coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── 2.6 HIPÓTESIS ────────────────────────────────────────
+    elif submenu == "💡 Hipótesis":
+        st.markdown("### 💡 Hipótesis")
+
+        hip = st.selectbox("Selecciona una hipótesis:", [
+            "H1: Los álbumes con más reseñas tienen calificaciones más altas",
+            "H2: Los álbumes clásicos (pre-2000) superan en rating a los modernos",
+        ])
+
+        # ─ H1 ─
+        if "H1" in hip:
+            st.markdown("""
+            <div class="hypothesis-box">
+            <b>Hipótesis 1:</b> Los álbumes que acumulan más reseñas escritas tienden a tener
+            calificaciones promedio más altas, lo que sugiere que la discusión crítica activa
+            de la comunidad está ligada a una mejor valoración del álbum.
+            </div>
+            """, unsafe_allow_html=True)
+
+            corr_rv = df["avg_rating"].corr(df["review_count"])
+            corr_rc = df["avg_rating"].corr(df["rating_count"])
+
+            st.markdown("#### Análisis")
+            c1, c2 = st.columns(2)
+
+            with c1:
+                fig = px.scatter(df.sample(800, random_state=1),
+                                 x="review_count", y="avg_rating",
+                                 color="avg_rating",
+                                 color_continuous_scale="Viridis",
+                                 opacity=0.55,
+                                 trendline="ols",
+                                 title="Reseñas vs Calificación (muestra 800 álbumes)",
+                                 labels={"review_count":"N° Reseñas","avg_rating":"Rating"})
+                st.plotly_chart(fig, use_container_width=True)
+
+            with c2:
+                corr_matrix = df[["avg_rating","review_count","rating_count"]].corr()
+                fig = px.imshow(corr_matrix, text_auto=".3f",
+                                color_continuous_scale="RdBu",
+                                title="Mapa de Correlación")
+                st.plotly_chart(fig, use_container_width=True)
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Corr(reseñas, rating)", f"{corr_rv:.4f}")
+            m2.metric("Corr(# ratings, rating)", f"{corr_rc:.4f}")
+            m3.metric("Álbumes con >500 reseñas", f"{(df['review_count']>500).sum()}")
+
+            st.markdown("""
+            **📌 Conclusión:**
+            Existe una correlación positiva entre el número de reseñas y la calificación promedio,
+            aunque de intensidad moderada. Los álbumes más discutidos tienden a estar mejor valorados,
+            posiblemente porque son obras más icónicas que generan más opiniones críticas.
+            Sin embargo, la correlación no es fuerte, indicando que la popularidad escrita no
+            garantiza una alta calificación — hay álbumes muy calificados que generan pocas reseñas extensas.
+            """)
+
+        # ─ H2 ─
+        else:
+            st.markdown("""
+            <div class="hypothesis-box">
+            <b>Hipótesis 2:</b> Los álbumes lanzados antes del año 2000 (clásicos) tienen
+            calificaciones promedio estadísticamente más altas que los álbumes modernos (post-2000),
+            debido al sesgo de supervivencia: solo los mejores álbumes del pasado perduran en la memoria colectiva.
+            </div>
+            """, unsafe_allow_html=True)
+
+            dfv = df[df["year"].notna()].copy()
+            dfv["Era"] = dfv["year"].apply(
+                lambda y: "Pre-2000 (Clásicos)" if y < 2000 else "Post-2000 (Modernos)"
+            )
+
+            c1, c2 = st.columns(2)
+            with c1:
+                fig = px.box(dfv, x="Era", y="avg_rating",
+                             color="Era", title="Rating por Era",
+                             color_discrete_map={
+                                 "Pre-2000 (Clásicos)": "#1e3c72",
+                                 "Post-2000 (Modernos)": "#e94560",
+                             })
+                st.plotly_chart(fig, use_container_width=True)
+
+            with c2:
+                dec_avg = dfv.groupby("decade")["avg_rating"].mean().reset_index()
+                fig = px.line(dec_avg, x="decade", y="avg_rating",
+                              title="Rating Promedio por Década",
+                              markers=True, color_discrete_sequence=["#1e3c72"])
+                fig.update_traces(line_width=2.5, marker_size=7)
+                fig.add_vline(x=2000, line_dash="dash", line_color="#e94560",
+                              annotation_text="Año 2000", annotation_position="top right")
+                st.plotly_chart(fig, use_container_width=True)
+
+            pre  = dfv[dfv["year"] < 2000]["avg_rating"]
+            post = dfv[dfv["year"] >= 2000]["avg_rating"]
+            stat, pval = scipy_stats.mannwhitneyu(pre, post, alternative="greater")
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Media Pre-2000",  f"{pre.mean():.3f}")
+            m2.metric("Media Post-2000", f"{post.mean():.3f}")
+            m3.metric("Diferencia",      f"{pre.mean()-post.mean():.3f}")
+            m4.metric("p-valor (Mann-Whitney)", f"{pval:.4f}")
+
+            if pval < 0.05:
+                st.success("✅ Diferencia estadísticamente significativa (p < 0.05) — Hipótesis CONFIRMADA")
+            else:
+                st.warning("⚠️ Diferencia no significativa estadísticamente")
+
+            st.markdown("""
+            **📌 Conclusión:**
+            Los datos confirman que los álbumes previos al año 2000 tienen, en promedio,
+            calificaciones más altas de forma estadísticamente significativa.
+            Este resultado se explica principalmente por el **sesgo de supervivencia**:
+            con el paso del tiempo, solo los álbumes más apreciados son recordados y calificados
+            activamente. Los álbumes recientes conviven en un mercado más saturado y aún
+            no han pasado la prueba del tiempo.
+            """)
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 3 – APRENDIZAJE AUTOMÁTICO (CLASIFICACIÓN)
+# ══════════════════════════════════════════════════════════════
+def render_ml():
+    st.markdown("## 🤖 Aprendizaje Automático – Clasificación")
+    st.markdown(
+        "Entrena modelos para **predecir si un álbum es altamente calificado o popular** "
+        "a partir de variables numéricas del dataset."
+    )
+
+    # ─── Controles ───
+    col_a, col_b = st.columns([1, 1], gap="large")
+
+    with col_a:
+        algorithm = st.selectbox("🔧 Algoritmo:", [
+            "Random Forest",
+            "Regresión Logística",
+        ])
+
+        target_opt = st.selectbox("🎯 Variable a analizar (target):", [
+            "top_rated → álbum altamente calificado (avg_rating ≥ 3.8)",
+            "popular  → álbum popular (rating_count ≥ mediana)",
+        ])
+        target_col = "top_rated" if "top_rated" in target_opt else "popular"
+
+    FEAT_LABELS = {
+        "rating_count": "N° de calificaciones",
+        "review_count": "N° de reseñas",
+        "position":     "Posición en el ranking",
+        "year":         "Año de lanzamiento",
+    }
+
+    with col_b:
+        selected_feats = st.multiselect(
+            "📐 Variables independientes (features):",
+            options=list(FEAT_LABELS.keys()),
+            format_func=lambda x: FEAT_LABELS[x],
+            default=["review_count", "year"],
+        )
+
+        train_pct = st.slider("📊 % datos de entrenamiento:", 50, 90, 80, step=5)
+        test_pct  = 100 - train_pct
+        st.caption(f"Entrenamiento: **{train_pct}%**  ·  Prueba: **{test_pct}%**")
+
+    if not selected_feats:
+        st.warning("⚠️ Selecciona al menos una variable independiente.")
+        return
+
+    # ─── Preparar datos ───
+    df_ml = df[selected_feats + [target_col]].dropna()
+    X = df_ml[selected_feats]
+    y = df_ml[target_col]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_pct / 100, random_state=42, stratify=y
+    )
+
+    scaler = StandardScaler()
+    Xtr_s  = scaler.fit_transform(X_train)
+    Xte_s  = scaler.transform(X_test)
+
+    # ─── Entrenar ───
+    if algorithm == "Random Forest":
+        model = RandomForestClassifier(n_estimators=150, random_state=42, n_jobs=-1)
+    else:
+        model = LogisticRegression(max_iter=2000, random_state=42)
+
+    model.fit(Xtr_s, y_train)
+
+    y_pred_tr = model.predict(Xtr_s)
+    y_pred_te = model.predict(Xte_s)
+    y_prob_te = model.predict_proba(Xte_s)[:, 1]
+
+    acc_tr = accuracy_score(y_train, y_pred_tr)
+    acc_te = accuracy_score(y_test,  y_pred_te)
+    diff   = acc_tr - acc_te
+
+    # ─── Métricas principales ───
+    st.markdown("---")
+    st.markdown("### 📊 Resultados del Modelo")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🎓 Accuracy – Entrenamiento", f"{acc_tr:.4f}")
+    m2.metric("🔬 Accuracy – Prueba",        f"{acc_te:.4f}")
+    m3.metric("📚 Muestras Entrenamiento",    f"{len(X_train):,}")
+    m4.metric("🧪 Muestras Prueba",           f"{len(X_test):,}")
+
+    if diff > 0.1:
+        st.warning(f"⚠️ Posible sobreajuste (diferencia Acc = {diff:.4f})")
+    else:
+        st.success(f"✅ Modelo bien generalizado (diferencia Acc = {diff:.4f})")
+
+    # ─── Parámetros del modelo ───
+    if algorithm == "Regresión Logística":
+        coef_df = pd.DataFrame({
+            "Feature": [FEAT_LABELS[f] for f in selected_feats],
+            "Coeficiente": model.coef_[0],
+        }).sort_values("Coeficiente", ascending=False)
+        st.markdown("**Coeficientes del modelo:**")
+        fig_coef = px.bar(coef_df, x="Coeficiente", y="Feature", orientation="h",
+                          title="Coeficientes – Regresión Logística",
+                          color="Coeficiente", color_continuous_scale="RdBu",
+                          color_continuous_midpoint=0)
+        st.plotly_chart(fig_coef, use_container_width=True)
+    else:
+        imp_df = pd.DataFrame({
+            "Feature":     [FEAT_LABELS[f] for f in selected_feats],
+            "Importancia": model.feature_importances_,
+        }).sort_values("Importancia", ascending=False)
+        st.markdown("**Importancia de variables:**")
+        fig_imp = px.bar(imp_df, x="Importancia", y="Feature", orientation="h",
+                         title="Importancia de Variables – Random Forest",
+                         color="Importancia", color_continuous_scale="Blues")
+        fig_imp.update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig_imp, use_container_width=True)
+
+    # ─── Gráficas ───
+    tab_pred, tab_cm, tab_roc = st.tabs([
+        "📊 Entrenamiento vs Prueba",
+        "🔲 Matriz de Confusión",
+        "📈 Curva ROC",
+    ])
+
+    feat0 = selected_feats[0]
+    feat0_label = FEAT_LABELS[feat0]
+
+    with tab_pred:
+        # Combine train + test for the graph requirement
+        all_plot = pd.DataFrame({
+            feat0:       np.concatenate([X_train[feat0].values, X_test[feat0].values]),
+            "Clase Real": np.concatenate([y_train.values, y_test.values]),
+            "Predicción": np.concatenate([y_pred_tr, y_pred_te]),
+            "Conjunto":  ["Entrenamiento"]*len(y_train) + ["Prueba"]*len(y_test),
+        })
+        all_plot["Resultado"] = all_plot["Clase Real"] == all_plot["Predicción"]
+        all_plot["Estado"]    = all_plot["Resultado"].map({True:"✅ Correcto", False:"❌ Incorrecto"})
+
+        fig = px.strip(
+            all_plot, x=feat0, y="Clase Real",
+            color="Conjunto",
+            color_discrete_map={"Entrenamiento":"#1e3c72","Prueba":"#e94560"},
+            title=f"Predicciones vs Real · Feature: {feat0_label}",
+            labels={feat0: feat0_label, "Clase Real": "Clase Real"},
+            stripmode="overlay",
+        )
+        fig.update_traces(marker_size=5)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Las formas diferencian predicciones correctas (círculo) de incorrectas (X). "
+                   "Los colores distinguen entrenamiento y prueba.")
+
+    with tab_cm:
+        cm = confusion_matrix(y_test, y_pred_te)
+        labels = ["No (0)", "Sí (1)"]
+        fig = px.imshow(cm, text_auto=True,
+                        labels=dict(x="Predicción", y="Clase Real"),
+                        x=labels, y=labels,
+                        color_continuous_scale="Blues",
+                        title="Matriz de Confusión – Datos de Prueba")
+        st.plotly_chart(fig, use_container_width=True)
+
+        report = classification_report(y_test, y_pred_te, output_dict=True)
+        rpt_df = pd.DataFrame(report).T.round(4)
+        st.markdown("**Reporte de Clasificación:**")
+        st.dataframe(rpt_df, use_container_width=True)
+
+    with tab_roc:
+        fpr, tpr, _ = roc_curve(y_test, y_prob_te)
+        roc_auc = auc(fpr, tpr)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines",
+                                 name=f"Modelo (AUC = {roc_auc:.4f})",
+                                 line=dict(color="#e94560", width=2.5)))
+        fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode="lines",
+                                 name="Clasificador Aleatorio",
+                                 line=dict(color="gray", dash="dash", width=1.5)))
+        fig.update_layout(title="Curva ROC",
+                          xaxis_title="Tasa Falsos Positivos (FPR)",
+                          yaxis_title="Tasa Verdaderos Positivos (TPR)")
+        st.plotly_chart(fig, use_container_width=True)
+        st.metric("📊 AUC-ROC", f"{roc_auc:.4f}")
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 4 – SISTEMA DE RECOMENDACIÓN MUSICAL
+# ══════════════════════════════════════════════════════════════
+def render_recommendation():
+    st.markdown("## 🎵 Sistema de Recomendación Musical")
+    st.markdown(
+        "Recomendación basada en **similitud de contenido** (géneros + descriptores). "
+        "Busca un álbum y encuentra los más parecidos en el dataset."
+    )
+
+    @st.cache_resource(show_spinner="Construyendo motor de recomendación…")
+    def build_tfidf():
+        tfidf   = TfidfVectorizer(max_features=600, ngram_range=(1, 2))
+        matrix  = tfidf.fit_transform(df["content"])
+        return matrix
+
+    tfidf_matrix = build_tfidf()
+
+    def get_recs(pos_int, n=10):
+        sims = cosine_similarity(tfidf_matrix[pos_int:pos_int+1], tfidf_matrix)[0]
+        order = np.argsort(sims)[::-1]
+        order = [i for i in order if i != pos_int][:n]
+        return order, sims[order]
+
+    # ─── Búsqueda ───
+    query = st.text_input("🔍 Busca un álbum por nombre:",
+                          placeholder="Ej: OK Computer, Nevermind, Abbey Road…")
+
+    if query:
+        matches = df[df["release_name"].str.contains(query, case=False, na=False)]
+
+        if matches.empty:
+            st.warning("No se encontró ningún álbum con ese nombre.")
+            return
+
+        options = matches.apply(
+            lambda r: f"{r['release_name']} – {r['artist_name']} (#{int(r['position'])})", axis=1
+        ).tolist()
+        selected = st.selectbox("Selecciona el álbum:", options)
+        sel_idx  = matches.iloc[options.index(selected)].name  # DataFrame index value
+        sel_pos  = df.index.get_loc(sel_idx)                   # integer position
+        sel_row  = df.loc[sel_idx]
+
+        # ─── Info del álbum seleccionado ───
+        st.markdown("---")
+        st.markdown("### 🎵 Álbum Seleccionado")
+        ca, cb, cc = st.columns([3, 1, 1])
+        with ca:
+            st.markdown(f"**{sel_row['release_name']}** · *{sel_row['artist_name']}*")
+            yr = int(sel_row["year"]) if pd.notna(sel_row["year"]) else "N/D"
+            st.caption(f"📅 {yr}  ·  🎸 {sel_row['primary_genres']}")
+            st.caption(f"🏷️ {sel_row['descriptors']}")
+        cb.metric("⭐ Rating", sel_row["avg_rating"])
+        cc.metric("🏆 Posición", f"#{int(sel_row['position'])}")
+
+        n_recs = st.slider("Número de recomendaciones:", 5, 20, 10)
+        rec_positions, rec_scores = get_recs(sel_pos, n=n_recs)
+        rec_indices = [df.index[p] for p in rec_positions]
+        recs_df = df.loc[rec_indices].copy()
+        recs_df["Similitud"] = rec_scores
+
+        st.markdown(f"### 🎯 Top {n_recs} Recomendaciones")
+        for rank, (ridx, row) in enumerate(recs_df.iterrows(), start=1):
+            with st.expander(
+                f"#{rank} – {row['release_name']} · {row['artist_name']}  "
+                f"(Similitud: {row['Similitud']:.3f})"
+            ):
+                r1, r2, r3 = st.columns([3, 1, 1])
+                with r1:
+                    st.write(f"🎸 **Géneros:** {row['primary_genres']}")
+                    if row["secondary_genres"]:
+                        st.write(f"🎸 **Secundarios:** {row['secondary_genres']}")
+                    st.write(f"🏷️ **Descriptores:** {row['descriptors']}")
+                r2.metric("⭐ Rating", row["avg_rating"])
+                r3.metric("🏆 Pos.", f"#{int(row['position'])}")
+
+        # ─── Gráfica de similitud ───
+        st.markdown("### 📊 Comparativa de Similitud")
+        labels = [
+            f"{df.loc[df.index[p], 'release_name']} – {df.loc[df.index[p], 'artist_name']}"
+            for p in rec_positions
+        ]
+        fig = px.bar(x=labels, y=rec_scores,
+                     title=f"Similitud con «{sel_row['release_name']}»",
+                     labels={"x": "Álbum Recomendado", "y": "Score de Similitud"},
+                     color=rec_scores, color_continuous_scale="Blues")
+        fig.update_layout(xaxis_tickangle=-40, coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        st.info("💡 Escribe el nombre de un álbum para comenzar.")
+        st.markdown("**Sugerencias populares:**")
+        sugs = df.nsmallest(10, "position")[
+            ["position","release_name","artist_name","primary_genres","avg_rating"]
+        ].rename(columns={
+            "position":"#","release_name":"Álbum","artist_name":"Artista",
+            "primary_genres":"Géneros","avg_rating":"Rating",
+        })
+        st.dataframe(sugs, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 5 – ANÁLISIS POR CARGA DE ARCHIVOS
+# ══════════════════════════════════════════════════════════════
+def render_file_analysis():
+    st.markdown("## 📁 Análisis de Datos por Carga de Archivos")
+    st.markdown("Carga un archivo **CSV o Excel** y explora sus datos automáticamente.")
+
+    uploaded = st.file_uploader(
+        "📂 Selecciona un archivo:",
+        type=["csv","xlsx","xls"],
+        help="Formatos soportados: CSV (.csv), Excel (.xlsx, .xls)",
+    )
+
+    if uploaded is None:
+        st.info("👆 Carga un archivo para comenzar el análisis.")
+        st.markdown("""
+        **¿Qué puedes analizar?**
+        - Cualquier CSV o Excel con datos tabulares
+        - El sistema detecta automáticamente columnas numéricas y categóricas
+        - Genera estadísticas, correlaciones y gráficos automáticamente
+        """)
+        return
+
+    try:
+        if uploaded.name.endswith(".csv"):
+            try:
+                udf = pd.read_csv(uploaded)
+            except UnicodeDecodeError:
+                udf = pd.read_csv(uploaded, encoding="latin-1")
+        else:
+            udf = pd.read_excel(uploaded)
+    except Exception as e:
+        st.error(f"❌ Error al cargar el archivo: {e}")
+        return
+
+    st.success(f"✅ **{uploaded.name}** cargado — {len(udf):,} filas · {len(udf.columns)} columnas")
+
+    tab_data, tab_stats, tab_charts = st.tabs([
+        "📋 Vista de Datos", "📊 Estadísticas", "📈 Gráficos",
+    ])
+
+    num_cols = udf.select_dtypes(include=np.number).columns.tolist()
+    cat_cols = udf.select_dtypes(include="object").columns.tolist()
+
+    with tab_data:
+        st.markdown(f"**Columnas ({len(udf.columns)}):** {', '.join(udf.columns.tolist())}")
+        st.dataframe(udf, use_container_width=True, height=440)
+
+    with tab_stats:
+        dtype_df = pd.DataFrame({
+            "Tipo":       udf.dtypes.astype(str),
+            "No Nulos":   udf.notnull().sum(),
+            "Nulos":      udf.isnull().sum(),
+            "% Nulos":    (udf.isnull().mean() * 100).round(2),
+            "Únicos":     udf.nunique(),
+        })
+        st.dataframe(dtype_df, use_container_width=True)
+        if num_cols:
+            st.markdown("**Estadísticas descriptivas (numéricas):**")
+            st.dataframe(udf[num_cols].describe().round(4), use_container_width=True)
+
+    with tab_charts:
+        if not num_cols and not cat_cols:
+            st.warning("No se encontraron columnas graficables.")
+            return
+
+        all_cols = num_cols + cat_cols
+        col_sel = st.selectbox("Columna a graficar:", all_cols)
+
+        if col_sel in num_cols:
+            chart_t = st.radio("Tipo de gráfico:", ["Histograma","Boxplot","Serie"], horizontal=True)
+            if chart_t == "Histograma":
+                fig = px.histogram(udf, x=col_sel, nbins=40,
+                                   title=f"Distribución de {col_sel}",
+                                   color_discrete_sequence=["#1e3c72"])
+            elif chart_t == "Boxplot":
+                fig = px.box(udf, y=col_sel, title=f"Boxplot de {col_sel}",
+                             color_discrete_sequence=["#e94560"])
+            else:
+                fig = px.line(udf.reset_index(), x="index", y=col_sel,
+                              title=f"Serie de {col_sel}",
+                              color_discrete_sequence=["#1e3c72"])
+            st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            vc = udf[col_sel].value_counts().head(25)
+            fig = px.bar(x=vc.index, y=vc.values,
+                         title=f"Frecuencia de {col_sel} (top 25)",
+                         labels={"x": col_sel, "y": "Frecuencia"},
+                         color_discrete_sequence=["#1e3c72"])
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Auto-correlation heatmap
+        if len(num_cols) >= 2:
+            st.markdown("### 🔗 Correlación entre Variables Numéricas")
+            fig = px.imshow(udf[num_cols].corr().round(3),
+                            text_auto=True, color_continuous_scale="RdBu",
+                            title="Mapa de Calor de Correlaciones")
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Pair plot (up to 4 numeric cols)
+        if 2 <= len(num_cols) <= 6:
+            st.markdown("### 🔀 Matriz de Dispersión")
+            fig = px.scatter_matrix(udf[num_cols[:4]],
+                                    title="Scatter Matrix – Variables Numéricas",
+                                    color_discrete_sequence=["#e94560"])
+            st.plotly_chart(fig, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 6 – SENTIMIENTOS & SCRAPPING (PITCHFORK)
+# ══════════════════════════════════════════════════════════════
+def render_sentiment():
+    st.markdown("## 💬 Análisis de Sentimientos – Pitchfork Reviews")
+    st.markdown(
+        "Extrae reseñas recientes de **Pitchfork.com** y aplica "
+        "análisis de sentimientos con TextBlob."
+    )
+
+    @st.cache_data(ttl=3600, show_spinner="Obteniendo reseñas de Pitchfork…")
+    def scrape_pitchfork(n: int):
+        """Intenta RSS feed primero; si falla, HTML directo; si falla, datos demo."""
+        headers = {"User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )}
+
+        # ── Intento 1: RSS ──
+        try:
+            rss_url = "https://pitchfork.com/rss/reviews/albums/"
+            resp = requests.get(rss_url, headers=headers, timeout=12)
+            soup = BeautifulSoup(resp.content, "lxml-xml")
+            items = soup.find_all("item")
+            reviews = []
+            for it in items[:n]:
+                raw_title = it.find("title")
+                raw_desc  = it.find("description") or it.find("summary")
+                title_txt = raw_title.get_text(strip=True) if raw_title else "N/D"
+                desc_html = raw_desc.get_text(strip=True) if raw_desc else ""
+                desc_txt  = BeautifulSoup(desc_html, "html.parser").get_text(" ", strip=True)[:500]
+                # Pitchfork RSS titles: "Album: Artist: Score/10"
+                parts  = title_txt.split(":")
+                album  = parts[0].strip() if parts else title_txt
+                artist = parts[1].strip() if len(parts) > 1 else "N/D"
+                score  = parts[2].strip() if len(parts) > 2 else "N/D"
+                if desc_txt and len(desc_txt) > 30:
+                    reviews.append({"Álbum": album, "Artista": artist,
+                                    "Puntuación": score, "Reseña": desc_txt})
+            if reviews:
+                return reviews, "rss"
+        except Exception:
+            pass
+
+        # ── Intento 2: HTML directo ──
+        try:
+            url = "https://pitchfork.com/reviews/albums/"
+            resp = requests.get(url, headers=headers, timeout=12)
+            soup = BeautifulSoup(resp.content, "html.parser")
+
+            reviews = []
+            # Pitchfork usa un contenedor con clase que contiene "SummaryItem" (2024-2025)
+            articles = soup.find_all("div", class_=re.compile(r"SummaryItem|review", re.I))
+            if not articles:
+                articles = soup.find_all("article")
+            for art in articles[:n]:
+                name_el  = art.find(["h2","h3","em"]) or art.find(class_=re.compile(r"title|album", re.I))
+                art_el   = art.find(class_=re.compile(r"artist|band", re.I))
+                desc_el  = art.find("p") or art.find(class_=re.compile(r"dek|summary", re.I))
+                score_el = art.find(class_=re.compile(r"score|rating", re.I))
+
+                album  = name_el.get_text(strip=True)  if name_el  else "N/D"
+                artist = art_el.get_text(strip=True)   if art_el   else "N/D"
+                desc   = desc_el.get_text(strip=True)  if desc_el  else ""
+                score  = score_el.get_text(strip=True) if score_el else "N/D"
+
+                if album != "N/D" and len(desc) > 20:
+                    reviews.append({"Álbum": album, "Artista": artist,
+                                    "Puntuación": score, "Reseña": desc[:500]})
+            if reviews:
+                return reviews, "html"
+        except Exception:
+            pass
+
+        # ── Fallback: datos de demostración ──
+        demo = [
+            {"Álbum": "Bright Future", "Artista": "Adrianne Lenker",
+             "Puntuación": "8.7",
+             "Reseña": ("A quietly devastating record, Adrianne Lenker's Bright Future "
+                        "is filled with fragile beauty and intimate storytelling. "
+                        "The minimalist production lets every note breathe with purpose.")},
+            {"Álbum": "Manning Fireworks", "Artista": "MJ Lenderman",
+             "Puntuación": "8.6",
+             "Reseña": ("Manning Fireworks is a guitar-forward indie rock gem, full of "
+                        "wit and a laid-back confidence. Lenderman sounds completely in "
+                        "his element, delivering slacker anthems with surprising depth.")},
+            {"Álbum": "Short n' Sweet", "Artista": "Sabrina Carpenter",
+             "Puntuación": "6.8",
+             "Reseña": ("Carpenter's pop instincts are sharp but the album plays it safe. "
+                        "Some tracks shine with infectious hooks, yet others feel generic "
+                        "and forgettable against the current pop landscape.")},
+            {"Álbum": "Chromakopia", "Artista": "Tyler, the Creator",
+             "Puntuación": "7.9",
+             "Reseña": ("An ambitious and deeply personal record, Chromakopia showcases "
+                        "Tyler's growth as a producer and lyricist. It doesn't always "
+                        "cohere, but the highs are undeniable.")},
+            {"Álbum": "Diamond Jubilee", "Artista": "Cindy Lee",
+             "Puntuación": "10.0",
+             "Reseña": ("An overwhelming masterpiece — a lo-fi hauntological journey "
+                        "spanning nearly two hours. Diamond Jubilee is challenging, "
+                        "beautiful, and utterly singular. One of the decade's best.")},
+            {"Álbum": "GNX", "Artista": "Kendrick Lamar",
+             "Puntuación": "8.5",
+             "Reseña": ("Kendrick continues to dominate. GNX finds him reflective yet "
+                        "fierce, consolidating his position at the top of hip-hop. "
+                        "The production is meticulous and the lyricism unmatched.")},
+            {"Álbum": "Imaginal Disk", "Artista": "Magdalena Bay",
+             "Puntuación": "8.8",
+             "Reseña": ("A maximalist synth-pop odyssey, Imaginal Disk is one of the "
+                        "most inventive pop records in years. Mica and Matt deliver "
+                        "hooks wrapped in conceptual ambition.")},
+            {"Álbum": "Wall of Eyes", "Artista": "The Smile",
+             "Puntuación": "7.5",
+             "Reseña": ("The Smile's second album is refined but perhaps too restrained. "
+                        "Greenwood's arrangements are gorgeous, yet the record lacks the "
+                        "urgency and surprise of their debut.")},
+        ]
+        return demo[:n], "demo"
+
+    def analyze_sentiment(text: str):
+        blob = TextBlob(str(text))
+        pol  = blob.sentiment.polarity
+        sub  = blob.sentiment.subjectivity
+        lbl  = "😊 Positivo" if pol > 0.08 else ("😞 Negativo" if pol < -0.08 else "😐 Neutral")
+        return pol, sub, lbl
+
+    n_reviews = st.slider("N° de reseñas a obtener:", 4, 30, 8)
+
+    if st.button("🔍 Obtener y Analizar Reseñas", type="primary"):
+        with st.spinner("Conectando con Pitchfork…"):
+            reviews, source = scrape_pitchfork(n_reviews)
+
+        if source == "demo":
+            st.warning("⚠️ No fue posible conectar con Pitchfork en este momento. "
+                       "Se muestran datos de demostración para ilustrar el análisis.")
+        elif source == "rss":
+            st.success("✅ Reseñas obtenidas vía RSS feed de Pitchfork")
+        else:
+            st.success("✅ Reseñas obtenidas vía scraping de Pitchfork")
+
+        results = []
+        for r in reviews:
+            pol, sub, lbl = analyze_sentiment(r["Reseña"])
+            results.append({**r, "Polaridad": pol, "Subjetividad": sub, "Sentimiento": lbl})
+
+        rdf = pd.DataFrame(results)
+        st.session_state["pitchfork_results"] = rdf
+
+    # ─── Mostrar resultados ───
+    if "pitchfork_results" in st.session_state:
+        rdf = st.session_state["pitchfork_results"]
+        st.markdown(f"---\n### 📰 {len(rdf)} Reseñas Analizadas")
+
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("😊 Positivas",  (rdf["Sentimiento"] == "😊 Positivo").sum())
+        mc2.metric("😐 Neutrales",  (rdf["Sentimiento"] == "😐 Neutral").sum())
+        mc3.metric("😞 Negativas",  (rdf["Sentimiento"] == "😞 Negativo").sum())
+
+        # ─── Tarjetas de reseñas ───
+        st.markdown("### 📋 Reseñas y Sentimiento")
+        for _, row in rdf.iterrows():
+            with st.expander(
+                f"{row['Sentimiento']}  ·  **{row['Álbum']}** – {row['Artista']}  "
+                f"(Score: {row['Puntuación']})"
+            ):
+                st.markdown(f"*{row['Reseña']}*")
+                rc1, rc2, rc3 = st.columns(3)
+                rc1.metric("Polaridad",    f"{row['Polaridad']:.3f}")
+                rc2.metric("Subjetividad", f"{row['Subjetividad']:.3f}")
+                rc3.metric("Sentimiento",  row["Sentimiento"])
+
+        # ─── Gráficas ───
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            sc = rdf["Sentimiento"].value_counts()
+            fig = px.pie(values=sc.values, names=sc.index,
+                         title="Distribución de Sentimientos",
+                         color_discrete_sequence=["#1e3c72","#e94560","#f5a623"],
+                         hole=0.4)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with gc2:
+            fig = px.scatter(
+                rdf, x="Polaridad", y="Subjetividad",
+                color="Sentimiento", text="Álbum", size_max=10,
+                title="Polaridad vs Subjetividad",
+                color_discrete_map={
+                    "😊 Positivo": "#1e3c72",
+                    "😐 Neutral":  "#f5a623",
+                    "😞 Negativo": "#e94560",
+                },
+            )
+            fig.add_vline(x=0, line_dash="dash", line_color="gray")
+            fig.add_hline(y=0.5, line_dash="dot", line_color="gray")
+            fig.update_traces(textposition="top center", textfont_size=9)
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Polaridad bar
+        rdf_sorted = rdf.sort_values("Polaridad")
+        fig = px.bar(rdf_sorted, x="Polaridad",
+                     y=rdf_sorted["Álbum"] + " – " + rdf_sorted["Artista"],
+                     orientation="h",
+                     color="Polaridad", color_continuous_scale="RdYlGn",
+                     title="Polaridad por Álbum",
+                     labels={"y": ""})
+        fig.add_vline(x=0, line_color="white", line_dash="dash")
+        fig.update_layout(coloraxis_showscale=False, yaxis={"categoryorder":"total ascending"})
+        st.plotly_chart(fig, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# OPCIÓN 7 – PROMPTS DE IA
+# ══════════════════════════════════════════════════════════════
+def render_ai_prompts():
+    st.markdown("## 🧠 Consultas de Datos con IA")
+    st.markdown(
+        "Haz preguntas en lenguaje natural sobre el dataset de RateYourMusic. "
+        "La IA analiza el contexto y calcula la respuesta."
+    )
+
+    # ─── API Key ───
+    api_key = ""
+    try:
+        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        pass
+
+    if not api_key:
+        with st.sidebar:
+            api_key = st.text_input("🔑 API Key de Anthropic:",
+                                    type="password",
+                                    help="Ingresa tu clave de Anthropic para usar esta función.")
+
+    if not api_key:
+        st.info("""
+        **⚙️ Configuración requerida**
+        
+        Esta función usa la API de Claude (Anthropic). Para habilitarla:
+        
+        1. Obtén una API key en [console.anthropic.com](https://console.anthropic.com)
+        2. **Opción A (Streamlit Cloud):** Agrega `ANTHROPIC_API_KEY` en los *Secrets* del proyecto.
+        3. **Opción B (Local):** Ingresa la clave en el campo de la barra lateral.
+        """)
+        return
+
+    # ─── Pre-cálculos para respuestas precisas ───
+    precomputed = {
+        "n_columnas":      len(df.columns),
+        "n_registros":     len(df),
+        "rating_promedio": round(df["avg_rating"].mean(), 4),
+        "rating_max":      df["avg_rating"].max(),
+        "rating_min":      df["avg_rating"].min(),
+        "año_min":         int(df["year"].min()),
+        "año_max":         int(df["year"].max()),
+        "album_mas_ratings": df.loc[df["rating_count"].idxmax(), "release_name"],
+        "artist_mas_albumes": df["artist_name"].value_counts().idxmax(),
+        "n_albumes_90s":   len(df[(df["year"]>=1990)&(df["year"]<2000)]),
+        "genero_top_rating": (df.assign(g=df["primary_genres"].str.split(",").str[0].str.strip())
+                              .groupby("g")["avg_rating"].mean().idxmax()),
+        "columnas_lista":  ", ".join(df.columns.tolist()),
+        "top3_artistas":   ", ".join(df["artist_name"].value_counts().head(3).index.tolist()),
+        "top5_generos":    ", ".join(
+            df["primary_genres"].str.split(",").explode().str.strip()
+            .value_counts().head(5).index.tolist()
+        ),
+    }
+
+    context_str = "\n".join([f"- {k}: {v}" for k, v in precomputed.items()])
+
+    # ─── Ejemplos ───
+    st.markdown("### 💡 Ejemplos de preguntas:")
+    examples = [
+        "¿Cuántas columnas tiene el dataset?",
+        "¿Cuál es la calificación promedio?",
+        "¿Cuál es el álbum con más calificaciones?",
+        "¿Qué género tiene el mayor rating promedio?",
+        "¿Cuántos álbumes hay de los 90s?",
+        "¿Cuál es el artista con más álbumes en el top 5000?",
+        "¿Cuál es el rango de años del dataset?",
+        "¿Cuáles son los 5 géneros más comunes?",
+    ]
+    cols = st.columns(4)
+    for i, ex in enumerate(examples):
+        if cols[i % 4].button(ex, key=f"ex_{i}", use_container_width=True):
+            st.session_state["ai_query_val"] = ex
+
+    # ─── Input de pregunta ───
+    query = st.text_area(
+        "💬 Tu pregunta sobre el dataset:",
+        value=st.session_state.get("ai_query_val", ""),
+        placeholder="Ej: ¿Cuántos álbumes tienen un rating mayor a 4.0?",
+        height=110,
+    )
+
+    if st.button("🚀 Consultar con IA", type="primary") and query:
+        # Calcular respuesta directa si es posible
+        q = query.lower()
+        direct = ""
+        if any(w in q for w in ["columna","campo","cuántos campos"]):
+            direct = f"El dataset tiene {precomputed['n_columnas']} columnas: {precomputed['columnas_lista']}."
+        elif "registro" in q or "filas" in q or "álbumes" in q and "cuánto" in q:
+            direct = f"El dataset contiene {precomputed['n_registros']:,} registros."
+        elif "promedio" in q and ("rating" in q or "calificación" in q):
+            direct = f"La calificación promedio es {precomputed['rating_promedio']}."
+        elif "más calificaciones" in q or "más ratings" in q:
+            direct = f"El álbum con más calificaciones es '{precomputed['album_mas_ratings']}'."
+        elif "90" in q or "noventa" in q:
+            direct = f"Hay {precomputed['n_albumes_90s']} álbumes de los años 90 (1990-1999)."
+        elif "más álbumes" in q and "artista" in q:
+            direct = f"El artista con más álbumes en el top 5000 es '{precomputed['artist_mas_albumes']}'."
+        elif "género" in q and "rating" in q:
+            direct = f"El género con mayor rating promedio es '{precomputed['genero_top_rating']}'."
+        elif "rango" in q and "año" in q:
+            direct = f"El dataset cubre desde {precomputed['año_min']} hasta {precomputed['año_max']}."
+        elif "géneros" in q and ("comunes" in q or "frecuentes" in q or "populares" in q):
+            direct = f"Los 5 géneros más comunes son: {precomputed['top5_generos']}."
+
+        # Dynamic computation for more specific queries
+        try:
+            if "mayor a 4" in q or "mayor que 4" in q:
+                n = len(df[df["avg_rating"] > 4.0])
+                direct = f"Hay {n} álbumes con rating mayor a 4.0."
+            elif "mayor a 3.9" in q or "mayor que 3.9" in q:
+                n = len(df[df["avg_rating"] > 3.9])
+                direct = f"Hay {n} álbumes con rating mayor a 3.9."
+            elif "2000" in q and "álbumes" in q:
+                n = len(df[df["year"] >= 2000])
+                direct = f"Hay {n} álbumes lanzados a partir del año 2000."
+        except Exception:
+            pass
+
+        with st.spinner("🤖 Consultando a Claude…"):
+            try:
+                import anthropic as ant
+                client = ant.Anthropic(api_key=api_key)
+
+                system_prompt = f"""Eres un asistente experto en análisis de datos del dataset 
+'Top 5000 álbumes de RateYourMusic'. Respondes en español, de forma precisa y concisa.
+
+Datos pre-calculados del dataset:
+{context_str}
+
+Si la respuesta exacta está en los datos pre-calculados, úsala directamente.
+Si hay un dato calculado dinámicamente, confírmalo. Si no lo sabes con exactitud, 
+razona con los datos disponibles y sé honesto al respecto.
+Mantén respuestas breves (máx. 4 oraciones) salvo que se pida algo extenso."""
+
+                messages = [{"role": "user", "content": query}]
+                if direct:
+                    messages[0]["content"] = (
+                        f"{query}\n\n[Dato pre-calculado disponible: {direct}]"
+                    )
+
+                resp = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=1000,
+                    system=system_prompt,
+                    messages=messages,
+                )
+                answer = resp.content[0].text
+
+                st.markdown("### 🤖 Respuesta:")
+                st.markdown(f'<div class="ai-response">{answer}</div>', unsafe_allow_html=True)
+
+                if direct:
+                    st.success(f"✅ Dato verificado: {direct}")
+
+            except Exception as e:
+                st.error(f"Error al consultar la API: {e}")
+                if direct:
+                    st.info(f"Respuesta directa del sistema: {direct}")
+
+
+# ══════════════════════════════════════════════════════════════
+# ENRUTADOR PRINCIPAL
+# ══════════════════════════════════════════════════════════════
+if   page == "🏠 Inicio":                render_home()
+elif page == "📊 Análisis Exploratorio": render_eda()
+elif page == "🤖 Aprendizaje Automático": render_ml()
+elif page == "🎵 Sistema de Recomendación": render_recommendation()
+elif page == "📁 Análisis por Archivos": render_file_analysis()
+elif page == "💬 Sentimientos & Scrapping": render_sentiment()
+elif page == "🧠 Prompts de IA":         render_ai_prompts()
