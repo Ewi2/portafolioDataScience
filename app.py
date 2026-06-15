@@ -24,9 +24,7 @@ import os
 
 warnings.filterwarnings("ignore")
 
-# ──────────────────────────────────────────────────────────────
-# CONFIGURACIÓN DE PÁGINA
-# ──────────────────────────────────────────────────────────────
+
 st.set_page_config(
     page_title="Portafolio",
     page_icon="",
@@ -34,14 +32,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ──────────────────────────────────────────────────────────────
-# ESTILOS GLOBALES
-# ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 /* ── Fuentes y body ── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+@font-face {
+    font-family: 'Helvetica';
+    src: url('/app/static/Helvetica-Roman.otf') format('opentype');
+}
+html, body, [class*="css"] { font-family: 'Helvetica'; }
 
 /* ── Sidebar ── */
 section[data-testid="stSidebar"] { background: #0d0d1a !important; }
@@ -51,7 +49,7 @@ section[data-testid="stSidebar"] * { color: #c9cfe0 !important; }
     padding: 12px 0 8px;
     font-size: 1.6rem;
     letter-spacing: .12em;
-    font-weight: 700;
+    font-family: 'Helvetica', sans-serif;
     color: #e94560 !important;
 }
 
@@ -83,6 +81,7 @@ hr { border-color: #2a2a4a !important; }
     padding: 36px 40px;
     color: white;
     text-align: center;
+    font-family: 'Helvetica', sans-serif;
     margin-bottom: 24px;
 }
 .profile-card h1 { color: #e94560; font-size: 2.4rem; margin-bottom: 4px; }
@@ -120,9 +119,7 @@ hr { border-color: #2a2a4a !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────────────────────
-# CARGA Y PREPARACIÓN DE DATOS
-# ──────────────────────────────────────────────────────────────
+
 DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "rym_clean1.csv")
 
 @st.cache_data(show_spinner="Cargando dataset…")
@@ -137,8 +134,10 @@ def load_data():
         lambda x: x.split(",")[0].strip() if pd.notna(x) else "Unknown"
     )
     df["content"] = (
-        df["primary_genres"] + " " + df["secondary_genres"] + " " + df["descriptors"]
-    )
+    df["primary_genres"].fillna("").astype(str) + " " +
+    df["secondary_genres"].fillna("").astype(str) + " " +
+    df["descriptors"].fillna("").astype(str)).str.strip()
+    
     rating_median     = df["rating_count"].median()
     df["top_rated"]   = (df["avg_rating"] >= 3.8).astype(int)
     df["popular"]     = (df["rating_count"] >= rating_median).astype(int)
@@ -146,9 +145,7 @@ def load_data():
 
 df = load_data()
 
-# ──────────────────────────────────────────────────────────────
-# SIDEBAR – NAVEGACIÓN
-# ──────────────────────────────────────────────────────────────
+
 with st.sidebar:
     st.markdown('<div class="sidebar-logo">🎵 DS Portfolio</div>', unsafe_allow_html=True)
     st.markdown("---")
@@ -168,14 +165,10 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"**Dataset:** RateYourMusic Top 5 000")
     st.caption(f"**Registros:** {len(df):,}   |   **Campos:** {len(df.columns)}")
-    st.caption(f"**Período:** {int(df['year'].min())} – {int(df['year'].max())}")
+    st.caption(f"**Período:** {int(df['year'].min())} - {int(df['year'].max())}")
 
 
-# ══════════════════════════════════════════════════════════════
-# OPCIÓN 1 – INICIO / PORTAFOLIO
-# ══════════════════════════════════════════════════════════════
 def render_home():
-    # ─── Banner ───
     st.markdown("""
     <div class="profile-card">
         <h1>Portafolio de Ciencia de Datos</h1>
@@ -188,30 +181,17 @@ def render_home():
 
     col_photo, col_info = st.columns([1, 2], gap="large")
 
-    # ─── Foto ───
     with col_photo:
-        st.markdown("#### 📸 Fotografía")
-        st.markdown("""
-        <div class="dashed-box">
-            <div style="font-size:3.5rem;">👤</div>
-            <p style="margin-top:12px;"><b>Inserta tu fotografía aquí</b></p>
-            <code style="font-size:.75rem;">st.image("assets/foto.jpg", use_column_width=True)</code>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("#### Fotografía")
+        st.image("assets/foto.jpg")
 
-    # ─── Información personal ───
     with col_info:
-        st.markdown("#### 👤 Información Personal")
-        nombre = st.text_input(
-            "✏️ Tu nombre completo:",
-            placeholder="Escribe tu nombre aquí…",
-            key="student_name",
-        )
-        if nombre:
-            st.markdown(f"""
+        st.markdown("#### Información Personal")
+
+        st.markdown(f"""
             <div style="background:linear-gradient(135deg,#1e3c72,#2a5298);
                         border-radius:12px;padding:20px 24px;color:white;margin-top:8px;">
-                <h2 style="color:#FFD700;margin:0 0 4px;">👋 {nombre}</h2>
+                <h2 style="color:#FFD700;margin:0 0 4px;">Edwin González </h2>
                 <p style="color:#a8b2d8;margin:2px 0;">
                     Estudiante de Ingeniería en Sistemas y Redes Informáticas
                 </p>
@@ -219,33 +199,20 @@ def render_home():
             </div>
             """, unsafe_allow_html=True)
 
-        st.markdown("#### 📝 Resumen Personal")
         st.markdown("""
-        <div class="dashed-box" style="text-align:left;padding:16px 20px;">
-            <p style="margin:0;"><i>✏️ Reemplaza este bloque con tu resumen (3-5 líneas):</i></p>
+        <div style="text-align:left;padding:16px 20px;">
+            <p style="margin:0;"><i> ¿Quién soy?</i></p>
             <hr style="border-color:#2a2a4a;margin:10px 0;">
             <p style="margin:0;color:#8888aa;">
-                Ejemplo: Soy estudiante de Ingeniería en Sistemas con pasión por la Ciencia de Datos.
-                Mi proyecto analiza los 5 000 álbumes más populares de RateYourMusic, buscando
-                patrones de calificación, géneros y popularidad. Me interesa la intersección entre
-                la música y el análisis de datos.
+                Soy estudiante de Ingeniería en Sistemas y Redes Informáticas.
+                Me gusta la música.
+                Me apasiona la programación aunque no me considere como un programador todavía. Un poco de backend.
+                Busco aprender y poder tener las bases para desarrollar proyectos interesantes e importantes.
             </p>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("---")
-
-    # ─── Video ───
-    st.markdown("#### 🎬 Video Demo – Data Storytelling")
-    st.markdown("""
-    <div class="dashed-box">
-        <div style="font-size:3rem;">🎥</div>
-        <p style="margin-top:12px;"><b>Inserta tu video aquí</b></p>
-        <p style="color:#8888aa;">Duración: 5-7 min · Vestimenta formal · Con diapositivas</p>
-        <code style="font-size:.8rem;">st.video("https://youtu.be/TU_VIDEO_ID")</code>
-        <br><code style="font-size:.8rem;">st.video("assets/demo.mp4")</code>
-    </div>
-    """, unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -257,9 +224,8 @@ def render_home():
     k3.metric("🎸 Géneros Únicos",
               df["primary_genres"].str.split(",").explode().str.strip().nunique())
     k4.metric("📅 Años Cubiertos",
-              f"{int(df['year'].min())} – {int(df['year'].max())}")
+              f"{int(df['year'].min())} - {int(df['year'].max())}")
 
-    # ─── Top 10 ───
     st.markdown("#### 🏆 Top 10 Álbumes")
     top10 = df.nsmallest(10, "position")[
         ["position", "release_name", "artist_name", "avg_rating", "rating_count", "primary_genres"]
@@ -270,24 +236,20 @@ def render_home():
     st.dataframe(top10, use_container_width=True, hide_index=True)
 
 
-# ══════════════════════════════════════════════════════════════
-# OPCIÓN 2 – ANÁLISIS EXPLORATORIO
-# ══════════════════════════════════════════════════════════════
 def render_eda():
     st.markdown("## 📊 Análisis Exploratorio de Datos")
 
     submenu = st.selectbox("Selecciona una sección:", [
-        "📋 Descripción del Dataset",
-        "🔍 Descripción de los Campos",
-        "🗂️ Navegador del Dataset",
-        "🔎 Buscador de Registros",
-        "📈 Graficador Exploratorio",
-        "💡 Hipótesis",
+        "Descripción del Dataset",
+        "Descripción de los Campos",
+        "Navegador del Dataset",
+        "Buscador de Registros",
+        "Graficador Exploratorio",
+        "Hipótesis",
     ])
 
-    # ── 2.1 DESCRIPCIÓN ──────────────────────────────────────
-    if submenu == "📋 Descripción del Dataset":
-        st.markdown("### 📋 Descripción del Dataset")
+    if submenu == "Descripción del Dataset":
+        st.markdown("### Descripción del Dataset")
 
         col_a, col_b = st.columns([1, 1], gap="large")
         with col_a:
@@ -300,7 +262,7 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
 
 - **Origen:** RateYourMusic.com (comunidad)
 - **Criterio:** Ranking de popularidad ponderada
-- **Período cubierto:** 1954 – 2022
+- **Período cubierto:** 1954 - 2022
 - **Tipo de lanzamientos:** Álbumes de estudio
             """)
 
@@ -339,10 +301,9 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
             st.warning("⚠️ Valores faltantes detectados:")
             st.dataframe(missing.to_frame("Faltantes"), use_container_width=True)
         else:
-            st.success("✅ No hay valores faltantes en las columnas originales.")
+            st.success("No hay valores faltantes en las columnas originales.")
 
-    # ── 2.2 DESCRIPCIÓN DE CAMPOS ────────────────────────────
-    elif submenu == "🔍 Descripción de los Campos":
+    elif submenu == "Descripción de los Campos":
         st.markdown("### 🔍 Descripción de los Campos")
 
         campo = st.selectbox("Selecciona un campo:", [
@@ -352,17 +313,17 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
         ])
 
         TIPOS = {
-            "position":         ("Cuantitativo – Discreto", "Posición del álbum en el ranking global de popularidad."),
-            "release_name":     ("Categórico – Nominal",    "Título del álbum o lanzamiento."),
-            "artist_name":      ("Categórico – Nominal",    "Nombre del artista o banda que publicó el álbum."),
+            "position":         ("Cuantitativo - Discreto", "Posición del álbum en el ranking global de popularidad."),
+            "release_name":     ("Categórico - Nominal",    "Título del álbum o lanzamiento."),
+            "artist_name":      ("Categórico - Nominal",    "Nombre del artista o banda que publicó el álbum."),
             "release_date":     ("Fecha",                   "Fecha exacta de lanzamiento (año-mes-día)."),
             "release_type":     ("Categórico",              "Tipo de lanzamiento. En este dataset todos son 'album'."),
-            "primary_genres":   ("Categórico – Múltiple",   "Géneros musicales primarios, separados por coma."),
-            "secondary_genres": ("Categórico – Múltiple",   "Subgéneros o géneros complementarios (puede estar vacío)."),
-            "descriptors":      ("Categórico – Múltiple",   "Palabras clave que describen el mood o características del álbum."),
-            "avg_rating":       ("Cuantitativo – Continuo", "Calificación promedio ponderada otorgada por la comunidad (0.5–5.0)."),
-            "rating_count":     ("Cuantitativo – Discreto", "Número total de calificaciones individuales recibidas."),
-            "review_count":     ("Cuantitativo – Discreto", "Número total de reseñas escritas por usuarios."),
+            "primary_genres":   ("Categórico - Múltiple",   "Géneros musicales primarios, separados por coma."),
+            "secondary_genres": ("Categórico - Múltiple",   "Subgéneros o géneros complementarios (puede estar vacío)."),
+            "descriptors":      ("Categórico - Múltiple",   "Palabras clave que describen el mood o características del álbum."),
+            "avg_rating":       ("Cuantitativo - Continuo", "Calificación promedio ponderada otorgada por la comunidad (0.5–5.0)."),
+            "rating_count":     ("Cuantitativo - Discreto", "Número total de calificaciones individuales recibidas."),
+            "review_count":     ("Cuantitativo - Discreto", "Número total de reseñas escritas por usuarios."),
         }
 
         tipo, desc = TIPOS[campo]
@@ -410,8 +371,7 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
             st.info(f"Valores únicos: {df[campo].nunique()}")
             st.dataframe(vals.head(20).to_frame("Frecuencia"), use_container_width=True)
 
-    # ── 2.3 NAVEGADOR ────────────────────────────────────────
-    elif submenu == "🗂️ Navegador del Dataset":
+    elif submenu == "Navegador del Dataset":
         st.markdown("### 🗂️ Navegador del Dataset")
 
         f1, f2, f3 = st.columns(3)
@@ -448,8 +408,7 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
             use_container_width=True, height=520,
         )
 
-    # ── 2.4 BUSCADOR (BONUS) ─────────────────────────────────
-    elif submenu == "🔎 Buscador de Registros":
+    elif submenu == "Buscador de Registros":
         st.markdown("### 🔎 Buscador de Registros")
 
         search_by = st.radio("Buscar por:", ["Nombre de álbum", "Nombre de artista", "Posición (#)"],
@@ -480,8 +439,7 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
         elif "q" in dir() and q:
             st.warning("No se encontraron resultados.")
 
-    # ── 2.5 GRAFICADOR EXPLORATORIO ──────────────────────────
-    elif submenu == "📈 Graficador Exploratorio":
+    elif submenu == "Graficador Exploratorio":
         st.markdown("### 📈 Graficador Exploratorio")
 
         campo = st.selectbox("Campo a graficar:", [
@@ -538,8 +496,7 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
                               coloraxis_showscale=False)
             st.plotly_chart(fig, use_container_width=True)
 
-    # ── 2.6 HIPÓTESIS ────────────────────────────────────────
-    elif submenu == "💡 Hipótesis":
+    elif submenu == "Hipótesis":
         st.markdown("### 💡 Hipótesis")
 
         hip = st.selectbox("Selecciona una hipótesis:", [
@@ -656,11 +613,8 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
             """)
 
 
-# ══════════════════════════════════════════════════════════════
-# OPCIÓN 3 – APRENDIZAJE AUTOMÁTICO (CLASIFICACIÓN)
-# ══════════════════════════════════════════════════════════════
 def render_ml():
-    st.markdown("## 🤖 Aprendizaje Automático – Clasificación")
+    st.markdown("## Aprendizaje Automático - Clasificación")
     st.markdown(
         "Entrena modelos para **predecir si un álbum es altamente calificado o popular** "
         "a partir de variables numéricas del dataset."
@@ -850,7 +804,8 @@ def render_recommendation():
     @st.cache_resource(show_spinner="Construyendo motor de recomendación…")
     def build_tfidf():
         tfidf   = TfidfVectorizer(max_features=600, ngram_range=(1, 2))
-        matrix  = tfidf.fit_transform(df["content"])
+        corpus = df["content"].fillna("").astype(str).tolist()
+        matrix  = tfidf.fit_transform(corpus)
         return matrix
 
     tfidf_matrix = build_tfidf()

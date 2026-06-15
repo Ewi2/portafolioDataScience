@@ -1,6 +1,8 @@
 .streamlit/secrets.toml
 .streamlit/config.toml
 __pycache__/
+static/
+README.md
 *.pyc
 .venv/
 env/
