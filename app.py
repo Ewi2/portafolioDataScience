@@ -1,3 +1,5 @@
+from wsgiref import headers
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -504,7 +506,6 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
             "H2: Los álbumes clásicos (pre-2000) superan en rating a los modernos",
         ])
 
-        # ─ H1 ─
         if "H1" in hip:
             st.markdown("""
             <div class="hypothesis-box">
@@ -552,7 +553,6 @@ géneros, descriptores de atmósfera y métricas de popularidad para cada lanzam
             garantiza una alta calificación — hay álbumes muy calificados que generan pocas reseñas extensas.
             """)
 
-        # ─ H2 ─
         else:
             st.markdown("""
             <div class="hypothesis-box">
@@ -620,7 +620,6 @@ def render_ml():
         "a partir de variables numéricas del dataset."
     )
 
-    # ─── Controles ───
     col_a, col_b = st.columns([1, 1], gap="large")
 
     with col_a:
@@ -658,7 +657,6 @@ def render_ml():
         st.warning("⚠️ Selecciona al menos una variable independiente.")
         return
 
-    # ─── Preparar datos ───
     df_ml = df[selected_feats + [target_col]].dropna()
     X = df_ml[selected_feats]
     y = df_ml[target_col]
@@ -671,7 +669,6 @@ def render_ml():
     Xtr_s  = scaler.fit_transform(X_train)
     Xte_s  = scaler.transform(X_test)
 
-    # ─── Entrenar ───
     if algorithm == "Random Forest":
         model = RandomForestClassifier(n_estimators=150, random_state=42, n_jobs=-1)
     else:
@@ -687,7 +684,6 @@ def render_ml():
     acc_te = accuracy_score(y_test,  y_pred_te)
     diff   = acc_tr - acc_te
 
-    # ─── Métricas principales ───
     st.markdown("---")
     st.markdown("### 📊 Resultados del Modelo")
     m1, m2, m3, m4 = st.columns(4)
@@ -701,7 +697,6 @@ def render_ml():
     else:
         st.success(f"✅ Modelo bien generalizado (diferencia Acc = {diff:.4f})")
 
-    # ─── Parámetros del modelo ───
     if algorithm == "Regresión Logística":
         coef_df = pd.DataFrame({
             "Feature": [FEAT_LABELS[f] for f in selected_feats],
@@ -1006,119 +1001,96 @@ def render_file_analysis():
 # OPCIÓN 6 – SENTIMIENTOS & SCRAPPING (PITCHFORK)
 # ══════════════════════════════════════════════════════════════
 def render_sentiment():
-    st.markdown("## 💬 Análisis de Sentimientos – Pitchfork Reviews")
+    st.markdown("## 💬 Análisis de Sentimientos – Reseñas Musicales (RSS)")
     st.markdown(
-        "Extrae reseñas recientes de **Pitchfork.com** y aplica "
-        "análisis de sentimientos con TextBlob."
+        "Extrae reseñas y noticias musicales recientes vía **feeds RSS** de blogs de música como 'Brooklyn Vegan', 'The Line of Best Fit' y 'Stereogum' "
+        "y aplica análisis de sentimientos con TextBlob."
     )
 
-    @st.cache_data(ttl=3600, show_spinner="Obteniendo reseñas de Pitchfork…")
-    def scrape_pitchfork(n: int):
-        """Intenta RSS feed primero; si falla, HTML directo; si falla, datos demo."""
+    @st.cache_data(ttl=3600, show_spinner="Obteniendo reseñas vía RSS…")
+    def scrape_music_rss(n: int):
+        """Intenta varios feeds RSS de blogs de música; si todos fallan, datos demo."""
         headers = {"User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36"
         )}
 
-        # ── Intento 1: RSS ──
-        try:
-            rss_url = "https://pitchfork.com/rss/reviews/albums/"
-            resp = requests.get(rss_url, headers=headers, timeout=12)
-            soup = BeautifulSoup(resp.content, "lxml-xml")
-            items = soup.find_all("item")
-            reviews = []
-            for it in items[:n]:
-                raw_title = it.find("title")
-                raw_desc  = it.find("description") or it.find("summary")
-                title_txt = raw_title.get_text(strip=True) if raw_title else "N/D"
-                desc_html = raw_desc.get_text(strip=True) if raw_desc else ""
-                desc_txt  = BeautifulSoup(desc_html, "html.parser").get_text(" ", strip=True)[:500]
-                # Pitchfork RSS titles: "Album: Artist: Score/10"
-                parts  = title_txt.split(":")
-                album  = parts[0].strip() if parts else title_txt
-                artist = parts[1].strip() if len(parts) > 1 else "N/D"
-                score  = parts[2].strip() if len(parts) > 2 else "N/D"
-                if desc_txt and len(desc_txt) > 30:
-                    reviews.append({"Álbum": album, "Artista": artist,
-                                    "Puntuación": score, "Reseña": desc_txt})
-            if reviews:
-                return reviews, "rss"
-        except Exception:
-            pass
+        feeds = [
+            ("Brooklyn Vegan", "https://www.brooklynvegan.com/category/music/feed/"),
+            ("The Line of Best Fit", "https://www.thelineofbestfit.com/news/feed"),
+            ("Stereogum", "https://www.stereogum.com/feed/"),
+        ]
 
-        # ── Intento 2: HTML directo ──
-        try:
-            url = "https://pitchfork.com/reviews/albums/"
-            resp = requests.get(url, headers=headers, timeout=12)
-            soup = BeautifulSoup(resp.content, "html.parser")
+        for fuente, rss_url in feeds:
+            try:
+                resp = requests.get(rss_url, headers=headers, timeout=12)
+                soup = BeautifulSoup(resp.content, "lxml-xml")
+                items = soup.find_all("item")
 
-            reviews = []
-            # Pitchfork usa un contenedor con clase que contiene "SummaryItem" (2024-2025)
-            articles = soup.find_all("div", class_=re.compile(r"SummaryItem|review", re.I))
-            if not articles:
-                articles = soup.find_all("article")
-            for art in articles[:n]:
-                name_el  = art.find(["h2","h3","em"]) or art.find(class_=re.compile(r"title|album", re.I))
-                art_el   = art.find(class_=re.compile(r"artist|band", re.I))
-                desc_el  = art.find("p") or art.find(class_=re.compile(r"dek|summary", re.I))
-                score_el = art.find(class_=re.compile(r"score|rating", re.I))
+                reviews = []
+                for it in items[:n]:
+                    raw_title = it.find("title")
+                    raw_desc  = it.find("description") or it.find("summary")
+                    title_txt = raw_title.get_text(strip=True) if raw_title else "N/D"
+                    desc_html = raw_desc.get_text(strip=True) if raw_desc else ""
+                    desc_txt  = BeautifulSoup(desc_html, "html.parser").get_text(" ", strip=True)[:500]
 
-                album  = name_el.get_text(strip=True)  if name_el  else "N/D"
-                artist = art_el.get_text(strip=True)   if art_el   else "N/D"
-                desc   = desc_el.get_text(strip=True)  if desc_el  else ""
-                score  = score_el.get_text(strip=True) if score_el else "N/D"
+                    if desc_txt and len(desc_txt) > 30:
+                        reviews.append({
+                            "Álbum": title_txt,
+                            "Artista": fuente,
+                            "Puntuación": "N/D",
+                            "Reseña": desc_txt,
+                        })
 
-                if album != "N/D" and len(desc) > 20:
-                    reviews.append({"Álbum": album, "Artista": artist,
-                                    "Puntuación": score, "Reseña": desc[:500]})
-            if reviews:
-                return reviews, "html"
-        except Exception:
-            pass
+                if reviews:
+                    return reviews[:n], "rss"
+            except Exception:
+                continue
 
         # ── Fallback: datos de demostración ──
         demo = [
             {"Álbum": "Bright Future", "Artista": "Adrianne Lenker",
-             "Puntuación": "8.7",
-             "Reseña": ("A quietly devastating record, Adrianne Lenker's Bright Future "
-                        "is filled with fragile beauty and intimate storytelling. "
-                        "The minimalist production lets every note breathe with purpose.")},
+             "Puntuación": "N/D",
+             "Reseña": ("A quietly intimate record where every note feels handled with "
+                        "care. The minimalist production lets the songwriting breathe "
+                        "with real emotional weight.")},
             {"Álbum": "Manning Fireworks", "Artista": "MJ Lenderman",
-             "Puntuación": "8.6",
-             "Reseña": ("Manning Fireworks is a guitar-forward indie rock gem, full of "
-                        "wit and a laid-back confidence. Lenderman sounds completely in "
-                        "his element, delivering slacker anthems with surprising depth.")},
+             "Puntuación": "N/D",
+             "Reseña": ("A relaxed, guitar-driven indie rock collection full of wit and "
+                        "laid-back confidence. Lenderman sounds completely comfortable "
+                        "in his own skin.")},
             {"Álbum": "Short n' Sweet", "Artista": "Sabrina Carpenter",
-             "Puntuación": "6.8",
-             "Reseña": ("Carpenter's pop instincts are sharp but the album plays it safe. "
-                        "Some tracks shine with infectious hooks, yet others feel generic "
-                        "and forgettable against the current pop landscape.")},
+             "Puntuación": "N/D",
+             "Reseña": ("The hooks are undeniable, but the record plays things safe. "
+                        "Some tracks shine while others blend into the current pop "
+                        "landscape without leaving much of a mark.")},
             {"Álbum": "Chromakopia", "Artista": "Tyler, the Creator",
-             "Puntuación": "7.9",
-             "Reseña": ("An ambitious and deeply personal record, Chromakopia showcases "
-                        "Tyler's growth as a producer and lyricist. It doesn't always "
-                        "cohere, but the highs are undeniable.")},
+             "Puntuación": "N/D",
+             "Reseña": ("An ambitious, deeply personal project showing real growth as a "
+                        "producer and lyricist. It does not always cohere, but the "
+                        "highs are genuinely striking.")},
             {"Álbum": "Diamond Jubilee", "Artista": "Cindy Lee",
-             "Puntuación": "10.0",
-             "Reseña": ("An overwhelming masterpiece — a lo-fi hauntological journey "
-                        "spanning nearly two hours. Diamond Jubilee is challenging, "
-                        "beautiful, and utterly singular. One of the decade's best.")},
+             "Puntuación": "N/D",
+             "Reseña": ("A sprawling, hypnotic journey that rewards patience. Despite "
+                        "its unconventional length, the record feels remarkably "
+                        "cohesive and quietly ambitious.")},
             {"Álbum": "GNX", "Artista": "Kendrick Lamar",
-             "Puntuación": "8.5",
-             "Reseña": ("Kendrick continues to dominate. GNX finds him reflective yet "
-                        "fierce, consolidating his position at the top of hip-hop. "
-                        "The production is meticulous and the lyricism unmatched.")},
+             "Puntuación": "N/D",
+             "Reseña": ("Kendrick remains in firm control of his craft, blending "
+                        "reflection with confidence. The production is meticulous "
+                        "and the writing keeps finding new angles.")},
             {"Álbum": "Imaginal Disk", "Artista": "Magdalena Bay",
-             "Puntuación": "8.8",
-             "Reseña": ("A maximalist synth-pop odyssey, Imaginal Disk is one of the "
-                        "most inventive pop records in years. Mica and Matt deliver "
-                        "hooks wrapped in conceptual ambition.")},
+             "Puntuación": "N/D",
+             "Reseña": ("A maximalist, endlessly inventive synth-pop record. The duo "
+                        "wraps conceptual ambition around genuinely catchy "
+                        "songwriting.")},
             {"Álbum": "Wall of Eyes", "Artista": "The Smile",
-             "Puntuación": "7.5",
-             "Reseña": ("The Smile's second album is refined but perhaps too restrained. "
-                        "Greenwood's arrangements are gorgeous, yet the record lacks the "
-                        "urgency and surprise of their debut.")},
+             "Puntuación": "N/D",
+             "Reseña": ("A more restrained outing than their debut. The arrangements "
+                        "are elegant, though the album occasionally lacks the urgency "
+                        "of their earlier work.")},
         ]
         return demo[:n], "demo"
 
@@ -1132,16 +1104,14 @@ def render_sentiment():
     n_reviews = st.slider("N° de reseñas a obtener:", 4, 30, 8)
 
     if st.button("🔍 Obtener y Analizar Reseñas", type="primary"):
-        with st.spinner("Conectando con Pitchfork…"):
-            reviews, source = scrape_pitchfork(n_reviews)
+        with st.spinner("Conectando con feeds RSS de música…"):
+            reviews, source = scrape_music_rss(n_reviews)
 
         if source == "demo":
-            st.warning("⚠️ No fue posible conectar con Pitchfork en este momento. "
+            st.warning("⚠️ No fue posible conectar con los feeds RSS en este momento. "
                        "Se muestran datos de demostración para ilustrar el análisis.")
-        elif source == "rss":
-            st.success("✅ Reseñas obtenidas vía RSS feed de Pitchfork")
         else:
-            st.success("✅ Reseñas obtenidas vía scraping de Pitchfork")
+            st.success("✅ Reseñas obtenidas vía RSS feed")
 
         results = []
         for r in reviews:
@@ -1149,11 +1119,11 @@ def render_sentiment():
             results.append({**r, "Polaridad": pol, "Subjetividad": sub, "Sentimiento": lbl})
 
         rdf = pd.DataFrame(results)
-        st.session_state["pitchfork_results"] = rdf
+        st.session_state["rss_results"] = rdf
 
     # ─── Mostrar resultados ───
-    if "pitchfork_results" in st.session_state:
-        rdf = st.session_state["pitchfork_results"]
+    if "rss_results" in st.session_state:
+        rdf = st.session_state["rss_results"]
         st.markdown(f"---\n### 📰 {len(rdf)} Reseñas Analizadas")
 
         mc1, mc2, mc3 = st.columns(3)
@@ -1212,169 +1182,312 @@ def render_sentiment():
         fig.update_layout(coloraxis_showscale=False, yaxis={"categoryorder":"total ascending"})
         st.plotly_chart(fig, use_container_width=True)
 
-
-# ══════════════════════════════════════════════════════════════
-# OPCIÓN 7 – PROMPTS DE IA
-# ══════════════════════════════════════════════════════════════
 def render_ai_prompts():
-    st.markdown("## 🧠 Consultas de Datos con IA")
-    st.markdown(
-        "Haz preguntas en lenguaje natural sobre el dataset de RateYourMusic. "
-        "La IA analiza el contexto y calcula la respuesta."
-    )
 
-    # ─── API Key ───
-    api_key = ""
-    try:
-        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-    except Exception:
-        pass
+    # ── Base de conocimiento ──────────────────────────────────────────────
+    ORIGINAL_COLS = [
+        "position", "release_name", "artist_name", "release_date", "release_type",
+        "primary_genres", "secondary_genres", "descriptors",
+        "avg_rating", "rating_count", "review_count",
+    ]
 
-    if not api_key:
-        with st.sidebar:
-            api_key = st.text_input("🔑 API Key de Anthropic:",
-                                    type="password",
-                                    help="Ingresa tu clave de Anthropic para usar esta función.")
-
-    if not api_key:
-        st.info("""
-        **⚙️ Configuración requerida**
-        
-        Esta función usa la API de Claude (Anthropic). Para habilitarla:
-        
-        1. Obtén una API key en [console.anthropic.com](https://console.anthropic.com)
-        2. **Opción A (Streamlit Cloud):** Agrega `ANTHROPIC_API_KEY` en los *Secrets* del proyecto.
-        3. **Opción B (Local):** Ingresa la clave en el campo de la barra lateral.
-        """)
-        return
-
-    # ─── Pre-cálculos para respuestas precisas ───
-    precomputed = {
-        "n_columnas":      len(df.columns),
-        "n_registros":     len(df),
-        "rating_promedio": round(df["avg_rating"].mean(), 4),
-        "rating_max":      df["avg_rating"].max(),
-        "rating_min":      df["avg_rating"].min(),
-        "año_min":         int(df["year"].min()),
-        "año_max":         int(df["year"].max()),
-        "album_mas_ratings": df.loc[df["rating_count"].idxmax(), "release_name"],
-        "artist_mas_albumes": df["artist_name"].value_counts().idxmax(),
-        "n_albumes_90s":   len(df[(df["year"]>=1990)&(df["year"]<2000)]),
-        "genero_top_rating": (df.assign(g=df["primary_genres"].str.split(",").str[0].str.strip())
-                              .groupby("g")["avg_rating"].mean().idxmax()),
-        "columnas_lista":  ", ".join(df.columns.tolist()),
-        "top3_artistas":   ", ".join(df["artist_name"].value_counts().head(3).index.tolist()),
-        "top5_generos":    ", ".join(
-            df["primary_genres"].str.split(",").explode().str.strip()
-            .value_counts().head(5).index.tolist()
-        ),
+    DECADE_KEYWORDS = {
+        "cincuenta": 1950, "50s": 1950,
+        "sesenta": 1960, "60s": 1960,
+        "setenta": 1970, "70s": 1970,
+        "ochenta": 1980, "80s": 1980,
+        "noventa": 1990, "90s": 1990,
+        "2000s": 2000, "dosmil": 2000,
+        "2010s": 2010,
+        "2020s": 2020,
     }
 
-    context_str = "\n".join([f"- {k}: {v}" for k, v in precomputed.items()])
+    def responder(pregunta: str) -> str:
+        p = pregunta.lower()
+        for a, b in [("á","a"),("é","e"),("í","i"),("ó","o"),("ú","u"),("¿",""),("?","")]:
+            p = p.replace(a, b)
 
-    # ─── Ejemplos ───
-    st.markdown("### 💡 Ejemplos de preguntas:")
-    examples = [
+        # ── Preguntas sobre el dataset ──────────────────────────────────
+        if any(x in p for x in ["cuantas columnas","numero de columnas","cuantos campos","cuantas variables"]):
+            return f"📋 El dataset tiene **{len(ORIGINAL_COLS)} columnas**:\n\n" + \
+                   "\n".join(f"- `{c}`" for c in ORIGINAL_COLS)
+
+        if any(x in p for x in ["cuantos registros","cuantas filas","cuantos datos","tamano","cuantos albumes tiene"]):
+            return f"📊 El dataset tiene **{len(df):,} registros** (álbumes) y **{len(ORIGINAL_COLS)} columnas**."
+
+        m = re.search(r"(media|promedio|mean)\s+(?:del?\s+campo\s+)?(\w+)", p)
+        if m:
+            campo = m.group(2)
+            match = next((c for c in ["avg_rating","rating_count","review_count","position","year"]
+                         if campo in c.lower() or c.lower() in campo), None)
+            if match:
+                return f"📈 La media del campo **{match}** es **{df[match].mean():.4f}**."
+            return ("⚠️ No encontré ese campo numérico. Campos disponibles: "
+                    "`avg_rating`, `rating_count`, `review_count`, `position`, `year`.")
+
+        m2 = re.search(r"(maximo|mayor valor|max)\s+(?:del?\s+campo\s+)?(\w+)", p)
+        if m2:
+            campo = m2.group(2)
+            match = next((c for c in ["avg_rating","rating_count","review_count","position","year"]
+                         if campo in c.lower() or c.lower() in campo), None)
+            if match:
+                return f"🔺 El valor máximo del campo **{match}** es **{df[match].max()}**."
+
+        m3 = re.search(r"(minimo|menor valor|min)\s+(?:del?\s+campo\s+)?(\w+)", p)
+        if m3:
+            campo = m3.group(2)
+            match = next((c for c in ["avg_rating","rating_count","review_count","position","year"]
+                         if campo in c.lower() or c.lower() in campo), None)
+            if match:
+                return f"🔻 El valor mínimo del campo **{match}** es **{df[match].min()}**."
+
+        if any(x in p for x in ["valores unicos","categorias","opciones de release_type","tipo de lanzamiento"]):
+            vals = df["release_type"].unique().tolist()
+            return f"🏷️ Los valores únicos de **release_type** son:\n\n" + \
+                   "\n".join(f"- `{v}`" for v in vals)
+
+        if any(x in p for x in ["album con mas calificaciones","album mas calificado","mas ratings","album mas popular"]):
+            row = df.loc[df["rating_count"].idxmax()]
+            return (f"🏆 El álbum con más calificaciones es **{row['release_name']}** "
+                    f"de *{row['artist_name']}* con **{int(row['rating_count']):,}** ratings "
+                    f"(rating promedio: {row['avg_rating']}).")
+
+        if any(x in p for x in ["album con mas resenas","album con mas reviews"]):
+            row = df.loc[df["review_count"].idxmax()]
+            return (f"📝 El álbum con más reseñas escritas es **{row['release_name']}** "
+                    f"de *{row['artist_name']}* con **{int(row['review_count']):,}** reseñas.")
+
+        if any(x in p for x in ["artista con mas albumes","artista mas frecuente","artista con mas discos"]):
+            vc = df["artist_name"].value_counts().head(5)
+            lines = "\n".join(f"- **{k}**: {v} álbumes" for k, v in vc.items())
+            return f"🎤 Top 5 artistas con más álbumes en el dataset:\n\n{lines}"
+
+        if any(x in p for x in ["generos mas comunes","generos hay","que generos","top generos"]):
+            vc = (df["primary_genres"].str.split(",").explode().str.strip().value_counts().head(8))
+            lines = "\n".join(f"- **{k}**: {v} álbumes" for k, v in vc.items())
+            return f"🎸 Los 8 géneros primarios más comunes son:\n\n{lines}"
+
+        if any(x in p for x in ["genero con mejor rating","genero con mayor rating","genero mejor calificado"]):
+            g = (df.assign(g=df["primary_genres"].str.split(",").str[0].str.strip())
+                 .groupby("g")["avg_rating"].mean().idxmax())
+            val = (df.assign(g=df["primary_genres"].str.split(",").str[0].str.strip())
+                   .groupby("g")["avg_rating"].mean().max())
+            return f"🌟 El género con mayor rating promedio es **{g}** ({val:.3f})."
+
+        if any(x in p for x in ["rango de anos","que anos cubre","periodo del dataset","desde que ano"]):
+            return f"📅 El dataset cubre desde **{int(df['year'].min())}** hasta **{int(df['year'].max())}**."
+
+        for kw, dec in DECADE_KEYWORDS.items():
+            if kw in p and ("decada" in p or "anos" in p or "albumes" in p):
+                sub = df[df["decade"] == dec]
+                return (f"📀 Hay **{len(sub)} álbumes** de la década de **{dec}s**, "
+                        f"con un rating promedio de **{sub['avg_rating'].mean():.3f}**.")
+
+        if "correlacion" in p:
+            num_cols = ["avg_rating", "rating_count", "review_count", "position"]
+            corr = df[num_cols].corr()["avg_rating"].drop("avg_rating").sort_values(ascending=False)
+            lines = "\n".join(f"- **{k}**: {v:.4f}" for k, v in corr.items())
+            return (f"🔗 Correlación con **avg_rating** (calificación promedio):\n\n{lines}\n\n"
+                    "Valores cercanos a 1 indican correlación positiva fuerte; cercanos a -1, negativa fuerte.")
+
+        if any(x in p for x in ["estadisticas","describe","resumen general","distribucion general"]):
+            cols = ["avg_rating", "rating_count", "review_count", "position", "year"]
+            desc = df[cols].describe().round(2)
+            return f"📊 Estadísticas descriptivas del dataset:\n\n```\n{desc.to_string()}\n```"
+
+        # ── Conceptos de Machine Learning (sección del portafolio) ───────
+        respuestas_ml = {
+            "accuracy": ("✅ **Accuracy** es la proporción de predicciones correctas sobre el total.\n\n"
+                        "`Accuracy = Predicciones correctas / Total`\n\n"
+                        "En la sección de Aprendizaje Automático de este portafolio, se muestra el accuracy "
+                        "de entrenamiento y de prueba para detectar sobreajuste."),
+            "regresion logistica": ("📐 **Regresión Logística** calcula la *probabilidad* de que un álbum "
+                                    "pertenezca a una clase (por ejemplo, ser 'altamente calificado').\n\n"
+                                    "Usa una función sigmoide que transforma cualquier valor al rango [0, 1]. "
+                                    "Si la probabilidad supera 0.5, predice la clase positiva."),
+            "random forest": ("🌳 **Random Forest** combina muchos árboles de decisión entrenados con "
+                              "subconjuntos distintos de datos.\n\n"
+                              "Cada árbol vota y gana la mayoría. Esto reduce el sobreajuste y mejora "
+                              "la precisión comparado con un solo árbol."),
+            "arbol de decision": ("🌲 Un **Árbol de Decisión** divide los datos con reglas sucesivas, por ejemplo:\n\n"
+                                  "- Si `review_count` > 500 → rama derecha\n- Si `avg_rating` ≥ 3.8 → clase 'top_rated'\n\n"
+                                  "Random Forest es, en esencia, un conjunto de muchos árboles como este."),
+            "sobreajuste": ("⚠️ **Sobreajuste (Overfitting)** ocurre cuando el modelo memoriza los datos de "
+                            "entrenamiento en lugar de aprender patrones generales.\n\n"
+                            "Se detecta cuando el accuracy de entrenamiento es mucho mayor al de prueba."),
+            "entrenamiento": ("🎓 Dividir los datos en **entrenamiento y prueba** es esencial para evaluar "
+                              "el modelo de forma honesta.\n\n"
+                              "- **Entrenamiento**: el modelo aprende los patrones\n"
+                              "- **Prueba**: se evalúa con datos que el modelo no vio antes\n\n"
+                              "En este portafolio puedes ajustar ese porcentaje con un control deslizante."),
+            "confusion": ("🔲 La **Matriz de Confusión** muestra los aciertos y errores del modelo:\n\n"
+                         "- **TP**: predijo positivo y era positivo ✅\n"
+                         "- **TN**: predijo negativo y era negativo ✅\n"
+                         "- **FP**: predijo positivo pero era negativo ❌\n"
+                         "- **FN**: predijo negativo pero era positivo ❌"),
+            "curva roc": ("📈 La **Curva ROC** grafica la tasa de verdaderos positivos contra la tasa de "
+                         "falsos positivos en distintos umbrales de decisión.\n\n"
+                         "El **AUC** (área bajo la curva) resume el rendimiento: 1.0 es un clasificador "
+                         "perfecto, 0.5 equivale a adivinar al azar."),
+            "tf-idf": ("🔤 **TF-IDF** convierte texto (géneros y descriptores) en vectores numéricos, "
+                      "dando más peso a palabras distintivas y menos a las muy comunes.\n\n"
+                      "Se usa en el Sistema de Recomendación de este portafolio."),
+            "tfidf": ("🔤 **TF-IDF** convierte texto (géneros y descriptores) en vectores numéricos, "
+                     "dando más peso a palabras distintivas y menos a las muy comunes.\n\n"
+                     "Se usa en el Sistema de Recomendación de este portafolio."),
+            "similitud coseno": ("📐 La **Similitud de Coseno** mide el ángulo entre dos vectores de texto.\n\n"
+                                "Ángulo 0° = similitud 1 (idénticos). Ángulo 90° = similitud 0 (sin relación).\n\n"
+                                "Se usa para recomendar álbumes parecidos según género y descriptores."),
+            "textblob": ("💬 **TextBlob** es una librería de Python para procesamiento de lenguaje natural.\n\n"
+                        "Calcula **polaridad** (-1 negativo a 1 positivo) y **subjetividad** (0 objetivo a "
+                        "1 subjetivo). Se usa en la sección de Análisis de Sentimientos."),
+            "scraping": ("🌐 El **Web Scraping** extrae datos automáticamente de páginas web.\n\n"
+                        "Esta app usa `requests` para descargar feeds RSS de blogs de música y "
+                        "`BeautifulSoup` para extraer el texto de cada reseña."),
+            "rss": ("📰 Un **feed RSS** es un archivo XML que los sitios web publican con su contenido "
+                   "más reciente en formato estructurado.\n\n"
+                   "Es más estable para scraping que el HTML normal, porque rara vez cambia su formato."),
+            "clasificacion": ("🤖 La **Clasificación** es una técnica de Aprendizaje Automático que predice "
+                              "una categoría (no un número continuo).\n\n"
+                              "En este portafolio se usa para predecir si un álbum es 'altamente calificado' "
+                              "o 'popular', usando Random Forest o Regresión Logística."),
+        }
+
+        for clave, respuesta in respuestas_ml.items():
+            if clave in p:
+                return respuesta
+
+        # ── Descripción general del dataset ───────────────────────────────
+        if any(x in p for x in ["dataset","datos","que contiene","de que trata"]):
+            return (f"🎵 El dataset **RateYourMusic Top 5000** tiene **{len(df):,} registros** y "
+                    f"**{len(ORIGINAL_COLS)} columnas**.\n\n"
+                    "Contiene los álbumes más populares de la comunidad de RateYourMusic.com: "
+                    "nombre, artista, fecha de lanzamiento, géneros, descriptores de atmósfera, "
+                    "calificación promedio, número de calificaciones y de reseñas.\n\n"
+                    f"Cubre el período de **{int(df['year'].min())}** a **{int(df['year'].max())}**.")
+
+        return ("🤔 No encontré una respuesta para esa pregunta. Prueba con:\n\n"
+                "- *¿Cuántas columnas tiene el dataset?*\n"
+                "- *¿Cuál es la media del avg_rating?*\n"
+                "- *¿Cuál es el álbum con más calificaciones?*\n"
+                "- *¿Qué géneros son los más comunes?*\n"
+                "- *¿Qué es el accuracy?*\n"
+                "- *¿Qué es Random Forest?*\n"
+                "- *Correlación con avg_rating*")
+
+    # ── Vista ────────────────────────────────────────────────────────────
+    SUGERENCIAS = [
         "¿Cuántas columnas tiene el dataset?",
-        "¿Cuál es la calificación promedio?",
+        "¿Cuál es la media del avg_rating?",
         "¿Cuál es el álbum con más calificaciones?",
-        "¿Qué género tiene el mayor rating promedio?",
-        "¿Cuántos álbumes hay de los 90s?",
-        "¿Cuál es el artista con más álbumes en el top 5000?",
-        "¿Cuál es el rango de años del dataset?",
-        "¿Cuáles son los 5 géneros más comunes?",
+        "¿Qué géneros son los más comunes?",
+        "¿Qué es el accuracy en clasificación?",
+        "¿Cuál es el artista con más álbumes?",
+        "¿Qué es Random Forest?",
+        "Correlación con avg_rating",
+        "¿Cuántos álbumes son de los 90s?",
+        "¿Qué es la matriz de confusión?",
+        "¿Cómo funciona el sistema de recomendación?",
+        "¿Qué es TextBlob?",
     ]
-    cols = st.columns(4)
-    for i, ex in enumerate(examples):
-        if cols[i % 4].button(ex, key=f"ex_{i}", use_container_width=True):
-            st.session_state["ai_query_val"] = ex
 
-    # ─── Input de pregunta ───
-    query = st.text_area(
-        "💬 Tu pregunta sobre el dataset:",
-        value=st.session_state.get("ai_query_val", ""),
-        placeholder="Ej: ¿Cuántos álbumes tienen un rating mayor a 4.0?",
-        height=110,
-    )
+    st.markdown("""
+    <div style='background:linear-gradient(135deg,#1e3c72,#e94560);
+                padding:1.8rem;border-radius:14px;color:white;margin-bottom:1.5rem;
+                box-shadow:0 4px 18px rgba(233,69,96,0.25);'>
+        <h2 style='margin:0;'>🧠 Interfaz IA — Asistente del Portafolio</h2>
+        <p style='margin:0.4rem 0 0 0;opacity:0.9;font-size:0.95rem;'>
+            Haz preguntas sobre el dataset de RateYourMusic o sobre conceptos de Ciencia de Datos.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if st.button("🚀 Consultar con IA", type="primary") and query:
-        # Calcular respuesta directa si es posible
-        q = query.lower()
-        direct = ""
-        if any(w in q for w in ["columna","campo","cuántos campos"]):
-            direct = f"El dataset tiene {precomputed['n_columnas']} columnas: {precomputed['columnas_lista']}."
-        elif "registro" in q or "filas" in q or "álbumes" in q and "cuánto" in q:
-            direct = f"El dataset contiene {precomputed['n_registros']:,} registros."
-        elif "promedio" in q and ("rating" in q or "calificación" in q):
-            direct = f"La calificación promedio es {precomputed['rating_promedio']}."
-        elif "más calificaciones" in q or "más ratings" in q:
-            direct = f"El álbum con más calificaciones es '{precomputed['album_mas_ratings']}'."
-        elif "90" in q or "noventa" in q:
-            direct = f"Hay {precomputed['n_albumes_90s']} álbumes de los años 90 (1990-1999)."
-        elif "más álbumes" in q and "artista" in q:
-            direct = f"El artista con más álbumes en el top 5000 es '{precomputed['artist_mas_albumes']}'."
-        elif "género" in q and "rating" in q:
-            direct = f"El género con mayor rating promedio es '{precomputed['genero_top_rating']}'."
-        elif "rango" in q and "año" in q:
-            direct = f"El dataset cubre desde {precomputed['año_min']} hasta {precomputed['año_max']}."
-        elif "géneros" in q and ("comunes" in q or "frecuentes" in q or "populares" in q):
-            direct = f"Los 5 géneros más comunes son: {precomputed['top5_generos']}."
+    if "ai_messages" not in st.session_state:
+        st.session_state.ai_messages = []
 
-        # Dynamic computation for more specific queries
-        try:
-            if "mayor a 4" in q or "mayor que 4" in q:
-                n = len(df[df["avg_rating"] > 4.0])
-                direct = f"Hay {n} álbumes con rating mayor a 4.0."
-            elif "mayor a 3.9" in q or "mayor que 3.9" in q:
-                n = len(df[df["avg_rating"] > 3.9])
-                direct = f"Hay {n} álbumes con rating mayor a 3.9."
-            elif "2000" in q and "álbumes" in q:
-                n = len(df[df["year"] >= 2000])
-                direct = f"Hay {n} álbumes lanzados a partir del año 2000."
-        except Exception:
-            pass
+    # Sugerencias como chips
+    if not st.session_state.ai_messages:
+        st.markdown("**💡 Preguntas que puedes hacer:**")
+        cols = st.columns(2)
+        for i, sugg in enumerate(SUGERENCIAS):
+            with cols[i % 2]:
+                if st.button(sugg, key=f"ai_s_{i}", use_container_width=True):
+                    st.session_state.ai_messages.append({"role": "user", "content": sugg})
+                    resp = responder(sugg)
+                    st.session_state.ai_messages.append({"role": "assistant", "content": resp})
+                    st.rerun()
+        st.markdown("---")
 
-        with st.spinner("🤖 Consultando a Claude…"):
-            try:
-                import anthropic as ant
-                client = ant.Anthropic(api_key=api_key)
+    # Historial de mensajes
+    for msg in st.session_state.ai_messages:
+        if msg["role"] == "user":
+            st.markdown(f"""
+            <div style='display:flex;justify-content:flex-end;margin-bottom:0.6rem;'>
+                <div style='background:#e94560;color:white;padding:0.8rem 1.1rem;
+                            border-radius:16px 16px 4px 16px;max-width:75%;
+                            font-size:0.94rem;box-shadow:0 2px 8px rgba(233,69,96,0.3);'>
+                    {msg["content"]}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style='display:flex;justify-content:flex-start;margin-bottom:0.6rem;'>
+                <div style='background:#13132b;color:#e8e8f0;padding:0.8rem 1.1rem;
+                            border-radius:16px 16px 16px 4px;max-width:80%;
+                            font-size:0.94rem;border:1px solid #2a3a6a;'>
+                    {msg["content"]}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-                system_prompt = f"""Eres un asistente experto en análisis de datos del dataset 
-'Top 5000 álbumes de RateYourMusic'. Respondes en español, de forma precisa y concisa.
+    # Input
+    prompt = st.chat_input("Escribe tu pregunta sobre el dataset o Ciencia de Datos…")
+    if prompt:
+        st.session_state.ai_messages.append({"role": "user", "content": prompt})
+        resp = responder(prompt)
+        st.session_state.ai_messages.append({"role": "assistant", "content": resp})
+        st.rerun()
 
-Datos pre-calculados del dataset:
-{context_str}
+    # Limpiar
+    if st.session_state.ai_messages:
+        st.markdown("---")
+        if st.button("🗑️ Limpiar conversación", use_container_width=False):
+            st.session_state.ai_messages = []
+            st.rerun()
 
-Si la respuesta exacta está en los datos pre-calculados, úsala directamente.
-Si hay un dato calculado dinámicamente, confírmalo. Si no lo sabes con exactitud, 
-razona con los datos disponibles y sé honesto al respecto.
-Mantén respuestas breves (máx. 4 oraciones) salvo que se pida algo extenso."""
+    # Ayuda
+    with st.expander("❓ Preguntas de ejemplo"):
+        st.markdown("""
+        **Sobre el dataset:**
+        - ¿Cuántas columnas tiene el dataset?
+        - ¿Cuántos registros tiene el dataset?
+        - ¿Cuál es la media del avg_rating?
+        - ¿Cuál es el máximo de rating_count?
+        - ¿Cuáles son los valores de release_type?
+        - ¿Cuál es el álbum con más calificaciones?
+        - ¿Qué artista tiene más álbumes?
+        - ¿Qué géneros son los más comunes?
+        - ¿Qué género tiene mejor rating promedio?
+        - ¿Cuántos álbumes son de los 90s?
+        - Correlación con avg_rating
+        - Estadísticas del dataset
 
-                messages = [{"role": "user", "content": query}]
-                if direct:
-                    messages[0]["content"] = (
-                        f"{query}\n\n[Dato pre-calculado disponible: {direct}]"
-                    )
+        **Sobre Machine Learning:**
+        - ¿Qué es el accuracy?
+        - ¿Qué es la regresión logística?
+        - ¿Qué es Random Forest?
+        - ¿Qué es el sobreajuste?
+        - ¿Qué es la matriz de confusión?
+        - ¿Qué es la curva ROC?
 
-                resp = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=1000,
-                    system=system_prompt,
-                    messages=messages,
-                )
-                answer = resp.content[0].text
-
-                st.markdown("### 🤖 Respuesta:")
-                st.markdown(f'<div class="ai-response">{answer}</div>', unsafe_allow_html=True)
-
-                if direct:
-                    st.success(f"✅ Dato verificado: {direct}")
-
-            except Exception as e:
-                st.error(f"Error al consultar la API: {e}")
-                if direct:
-                    st.info(f"Respuesta directa del sistema: {direct}")
-
+        **Sobre la aplicación:**
+        - ¿Cómo funciona el sistema de recomendación?
+        - ¿Qué es TF-IDF?
+        - ¿Qué es la similitud de coseno?
+        - ¿Cómo funciona el scraping?
+        - ¿Qué es TextBlob?
+        """)
 
 # ══════════════════════════════════════════════════════════════
 # ENRUTADOR PRINCIPAL
