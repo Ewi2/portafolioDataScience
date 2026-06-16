@@ -216,6 +216,8 @@ def render_home():
 
     st.markdown("---")
 
+    # ─── Video ───
+    st.video("https://youtu.be/uqg9rjeR3uI")
     st.markdown("---")
 
     # ─── KPIs del dataset ───
